@@ -28,6 +28,7 @@ export function exportTelemetry(document: TopologyDocument, state: ExportState) 
     const current = state[node.id];
     if (!current) continue;
     node.data.status = current.status;
+    if (current.pending) continue;
     const binding = node.data.binding;
     const source = binding?.source || node.data.deviceId;
     if (!Object.hasOwn(data, source)) Object.defineProperty(data, source, { value: {}, enumerable: true });

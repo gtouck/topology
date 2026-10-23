@@ -3,7 +3,7 @@ import { deviceGeometry, statusLabels, type DeviceStatus } from './topology';
 import { cableAppearance, cableAttributes } from './cables';
 import { escapeHtml, vectorIcon } from './icons';
 
-export interface ExportNodeState { status: DeviceStatus; values: Record<string, number>; label?: string }
+export interface ExportNodeState { status: DeviceStatus; values: Record<string, number>; label?: string; pending?: boolean }
 export type ExportState = Record<string, ExportNodeState>;
 export interface Point { x: number; y: number }
 export interface ExportEdgeGeometry { path: string; label: Point }

@@ -4,7 +4,7 @@ import {
   HelpCircle, Plus, Minus, Maximize, Scan, MousePointer2, Hand, Undo2, Redo2,
   Save, Download, Upload, Trash2, X, Check, RefreshCw, Pause, Play, LockKeyhole,
   PencilRuler, CircleAlert, ChevronRight, CircleCheck, Clock3, Unplug, Info,
-  Layers, SlidersHorizontal, RotateCcw, Radio, Move, ExternalLink,
+  Layers, SlidersHorizontal, RotateCcw, Radio, Move, ExternalLink, Copy, ClipboardPaste, CopyPlus,
 } from 'lucide';
 
 const icons = {
@@ -13,7 +13,7 @@ const icons = {
   Minus, Maximize, Scan, MousePointer2, Hand, Undo2, Redo2, Save, Download,
   Upload, Trash2, X, Check, RefreshCw, Pause, Play, LockKeyhole, PencilRuler,
   CircleAlert, ChevronRight, CircleCheck, Clock3, Unplug, Info, Layers,
-  SlidersHorizontal, RotateCcw, Radio, Move, ExternalLink,
+  SlidersHorizontal, RotateCcw, Radio, Move, ExternalLink, Copy, ClipboardPaste, CopyPlus,
 };
 export const iconNames = [
   'Activity', 'SatelliteDish', 'Cpu', 'Server', 'Router', 'Network', 'Zap', 'LayoutDashboard',
@@ -24,7 +24,7 @@ export const iconNames = [
   'SlidersHorizontal', 'RotateCcw', 'Radio', 'Move', 'ExternalLink',
 ] as const;
 export type IconName = typeof iconNames[number];
-export function icon(name: IconName, size = 18) {
+export function icon(name: keyof typeof icons, size = 18) {
   const svg = createElement(icons[name]);
   svg.setAttribute('width', String(size));
   svg.setAttribute('height', String(size));

@@ -1,6 +1,7 @@
 import { TopologyViewer } from './viewer';
 import { createDocument, parseDocument, sampleDocument, type TopologyDocument } from './document';
 import { LIBRARY_KEY, parseLibrary } from './library';
+import { parseWorkspace, effectiveDocument } from './workspace';
 import type { TelemetryData } from './runtime-data';
 import './viewer-demo.css';
 
@@ -13,9 +14,14 @@ let definition: TopologyDocument;
 try {
   const id = new URLSearchParams(location.search).get('document');
   if (id) {
-    const library = parseLibrary(JSON.parse(localStorage.getItem(LIBRARY_KEY) || 'null'));
-    const found = library.documents.find((d) => d.id === id);
+    const raw = JSON.parse(localStorage.getItem(LIBRARY_KEY) || 'null');
+    const library = parseLibrary(raw);
+    let found = library.documents.find((d) => d.id === id);
     if (!found) throw new Error('当前浏览器中没有这张拓扑，请导入导出的文件');
+    if (new URLSearchParams(location.search).get('draft') === '1') {
+      const recovery = effectiveDocument(parseWorkspace(raw), id);
+      if (recovery.draft && !recovery.stale) found = recovery.draft.document;
+    }
     definition = found;
   } else definition = sampleDocument('datacenter');
 } catch (error) { definition = createDocument('请导入拓扑文件'); el('#viewer-error').textContent = error instanceof Error ? error.message : '读取失败'; }

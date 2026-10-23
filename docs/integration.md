@@ -121,9 +121,31 @@ export function TopologyPanel({ definition, data }: {
 
 ## 本地验证页
 
-启动制作工具后打开 `/viewer.html`，可独立导入通用文件、填写宿主数据、观察节点点击回调。拓扑库的“独立预览”链接带文档 ID，由验证页读取同源浏览器里的对应存档；展示组件本身不依赖该存档。跨软件使用请传入导出的文件。
+启动制作工具后打开 `/viewer.html`，可独立导入通用文件、填写宿主数据、观察节点点击回调。拓扑库的“独立预览”链接带文档 ID 和 `draft=1`，由验证页读取同源浏览器中的有效草稿；没有该参数时读取手动保存版本。展示组件本身不依赖该存档。跨软件使用请传入导出的文件。
+
+浏览器拓扑库仍兼容 `version: 1`，额外的 `editing` 元数据保存草稿和有限历史。它属于制作工具内部存储，不属于 `.topology.json` 通用文件格式，不应作为宿主接口。自动保存不改变独立展示组件 API，也不把运行参数或模拟器状态写入文件。
 
 `/viewer.html?instances=2` 用两个独立实例验证数据隔离。右侧“填入示例数据”只是一次性准备输入，点击“更新数据”才发送给第一个实例，不会自动启动模拟器。
+
+## 制作工具中的宿主数据验证
+
+制作工具默认使用模拟数据，每两秒采样。画布工具栏可选择“宿主数据”，清空模拟值并等待宿主更新。下面的接口仅供制作工具验证，独立组件继续使用上文的 `setData()` / `updateData()`。
+
+```js
+window.stationPrototype.setDataMode('external');
+window.stationPrototype.updateTelemetry('DEV-001', {
+  azimuth: 128.6,
+  elevation: 42.3,
+}, 'normal');
+window.stationPrototype.getDataMode(); // 'external'
+
+// 主动恢复模拟数据，清空本次宿主值及采样历史。
+window.stationPrototype.setDataMode('simulation');
+```
+
+`updateTelemetry()` 按节点的“绑定设备 ID”匹配，参数使用模板内部的参数标识，返回匹配更新的节点数量。存在匹配设备时自动进入宿主模式；未知 ID 返回 0，不改变数据模式。参数必须是有限数值，状态为 `normal / warning / offline`，无效输入会抛错且不部分写入。
+
+宿主数据不会被定时器覆盖，暂停模拟和离线演示在宿主模式中禁用。切换拓扑后清空当前运行值并保持数据模式；撤销和重做保留仍存在节点的运行值。页面刷新后默认回到模拟模式，宿主应重新发送数据。以上运行状态均不改变文档或撤销历史。
 
 ## 独立 HTML 文件
 

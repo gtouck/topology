@@ -96,6 +96,16 @@ describe('图片与独立 HTML 导出', () => {
     expect(resolveNodeData(definition.topology.nodes[0].data, definitionsFromTemplates(doc.templates).antenna, data).status).toBe('normal');
   });
 
+  test('宿主模式尚未接收数据的节点导出后保留等待状态', () => {
+    const doc = fixture(), state = snapshot(doc);
+    const node = doc.topology.nodes[0];
+    state[node.id] = { status: 'offline', pending: true, values: {}, label: '等待数据' };
+    const { definition, data } = exportTelemetry(doc, state);
+    expect(data).not.toHaveProperty(node.data.binding!.source);
+    expect(resolveNodeData(definition.topology.nodes[0].data, definitionsFromTemplates(doc.templates).antenna, data).label).toBe('等待数据');
+    expect(renderTopologySvg(doc, state).svg).toContain('等待数据');
+  });
+
   test('独立 HTML 内嵌所有资源并暴露数据 API，恶意名称不能结束 script 标签', () => {
     const doc = fixture();
     doc.name = '</script><script>window.pwned=true</script>&\u2028';
