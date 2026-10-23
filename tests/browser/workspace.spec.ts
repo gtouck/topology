@@ -1,0 +1,90 @@
+import { expect, test } from '@playwright/test';
+import { sampleDocument } from '../../src/document';
+
+test('新建、重命名、复制、切换和删除拓扑，保留未手动保存的布局', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('.device-card')).toHaveCount(8);
+  const originalId = await page.locator('body').getAttribute('data-document-id');
+  await page.locator('.mode-switch [data-action="edit"]').click();
+  await page.locator('[data-device="module"]').click();
+  await expect(page.locator('.device-card')).toHaveCount(9);
+  await page.locator('.heading-actions [data-action="library"]').click();
+  await page.locator('[data-action="new-document"]').click();
+  await page.locator('#new-document-name').fill('卫星 A');
+  await page.locator('#new-document-kind').selectOption('satellite');
+  await page.locator('[data-action="create-document"]').click();
+  await expect(page.locator('.device-card')).toHaveCount(4);
+  await expect(page.locator('#crumb-document')).toHaveText('卫星 A');
+  const satelliteId = await page.locator('body').getAttribute('data-document-id');
+  await page.locator('.heading-actions [data-action="library"]').click();
+  await page.locator(`[data-document-action="open"][data-document-id="${originalId}"]`).click();
+  await expect(page.locator('.device-card')).toHaveCount(9);
+  await page.reload();
+  await expect(page.locator('.device-card')).toHaveCount(9);
+  await page.locator('.heading-actions [data-action="library"]').click();
+  await page.locator(`[data-document-action="rename"][data-document-id="${satelliteId}"]`).click();
+  await page.locator('#metadata-name').fill('卫星逻辑图');
+  await page.locator('[data-action="apply-document-info"]').click();
+  await expect(page.locator('.document-card h3', { hasText: '卫星逻辑图' })).toHaveCount(1);
+  await page.locator(`[data-document-action="copy"][data-document-id="${satelliteId}"]`).click();
+  await expect(page.locator('.document-card')).toHaveCount(3);
+  const copyId = await page.locator('body').getAttribute('data-document-id');
+  await page.locator(`[data-document-action="delete"][data-document-id="${copyId}"]`).click();
+  await page.locator('[data-document-action="confirm-delete"]').click();
+  await expect(page.locator('.document-card')).toHaveCount(2);
+});
+
+test('创建自定义节点模板并导出包含模板与数据绑定的通用文件', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('.mode-switch [data-action="edit"]').click();
+  await page.locator('[data-action="new-template"]').click();
+  await page.locator('#template-name').fill('电源模块');
+  await page.locator('#template-metrics').fill('voltage,电压,V,2');
+  await page.locator('[data-action="create-template"]').click();
+  await page.locator('.library-item', { hasText: '电源模块' }).click();
+  await expect(page.locator('.device-card')).toHaveCount(9);
+  await page.locator('.binding-fields summary').click();
+  await page.locator('#binding-source').fill('sat-power');
+  await page.locator('#binding-fields').fill('{"voltage":"power.voltage"}');
+  await page.locator('[data-action="apply-device"]').click();
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('[data-action="export-options"]').click();
+  await page.locator('[data-action="export"]').click();
+  const download = await downloadPromise;
+  const fs = await import('node:fs/promises');
+  const document = JSON.parse(await fs.readFile((await download.path())!, 'utf8'));
+  expect(document.format).toBe('topology-document'); expect(document.version).toBe(2);
+  expect(document.templates.some((t: { label: string }) => t.label === '电源模块')).toBe(true);
+  expect(document.topology.nodes.at(-1).data.binding).toMatchObject({ source: 'sat-power', fields: { voltage: 'power.voltage' } });
+});
+
+test('独立展示更新宿主数据，不修改定义，两个实例互不影响且可销毁', async ({ page }) => {
+  const doc = sampleDocument('datacenter');
+  const node = doc.topology.nodes[0];
+  const source = node.data.binding!.source;
+  const metric = node.data.visibleMetrics[0];
+  await page.goto('/viewer.html?instances=2');
+  await page.locator('#viewer-file').setInputFiles({ name: 'sample.topology.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(doc)) });
+  await expect(page.locator('#standalone-viewer .device-card')).toHaveCount(4);
+  await expect(page.locator('#second-viewer .device-card')).toHaveCount(4);
+  const first = page.locator(`#standalone-viewer [data-device-node="${node.id}"] [data-metric="${metric}"]`);
+  const second = page.locator(`#second-viewer [data-device-node="${node.id}"] [data-metric="${metric}"]`);
+  await expect(first).toHaveText('—');
+  await page.locator('#viewer-data').fill(JSON.stringify({ [source]: { [metric]: 55.5, status: 'normal' } }));
+  await page.locator('#apply-viewer-data').click();
+  await expect(first).toContainText('55.5'); await expect(second).toHaveText('—');
+  expect(await page.evaluate(() => window.topologyViewer.getDefinition())).toEqual(doc);
+  await page.locator(`#standalone-viewer [data-device-node="${node.id}"]`).click();
+  await expect(page.locator('#viewer-selection')).toContainText(source);
+  await page.evaluate(() => { window.topologyViewer.destroy(); window.topologyViewer.destroy(); });
+  await expect(page.locator('#standalone-viewer .topology-viewer')).toHaveCount(0);
+  await expect(page.locator('#second-viewer .device-card')).toHaveCount(4);
+});
+
+test('独立组件拒绝新版本文件时保留原画面', async ({ page }) => {
+  await page.goto('/viewer.html');
+  await expect(page.locator('.device-card')).toHaveCount(4);
+  await page.locator('#viewer-file').setInputFiles({ name: 'future.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ format: 'topology-document', version: 99 })) });
+  await expect(page.locator('#viewer-error')).toContainText('版本');
+  await expect(page.locator('.device-card')).toHaveCount(4);
+});

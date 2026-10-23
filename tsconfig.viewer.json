@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": false, "declaration": true, "emitDeclarationOnly": true, "outDir": "dist-viewer/types" },
+  "include": ["src/viewer-index.ts", "src/viewer.ts", "src/vite-env.d.ts"]
+}
