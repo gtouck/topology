@@ -6,7 +6,7 @@ export type LinkKind = 'rf' | 'if' | 'ethernet' | 'logical';
 export type DeviceStatus = 'normal' | 'warning' | 'offline';
 export interface MetricDefinition { key: string; label: string; unit: string; base: number; jitter: number; decimals: number }
 export interface DataBinding { source: string; fields: Record<string, string>; statusField?: string; statusMap?: Record<string, DeviceStatus> }
-export interface DeviceData { kind: DeviceKind; title: string; deviceId: string; address: string; visibleMetrics: string[]; status: DeviceStatus; ports?: PortDefinition[]; portSpacing?: number; binding?: DataBinding }
+export interface DeviceData { kind: DeviceKind; title: string; deviceId: string; address: string; visibleMetrics: string[]; status: DeviceStatus; ports?: PortDefinition[]; portSpacing?: number; binding?: DataBinding; locked?: boolean }
 export interface PortDefinition { id: string; label: string; kind: LinkKind; side: 'left' | 'right' | 'top' | 'bottom'; offset?: number }
 export interface DeviceDefinition { label: string; en: string; icon: IconName; model: string; metrics: MetricDefinition[]; ports: PortDefinition[] }
 export interface DeviceRecord { id: string; x: number; y: number; data: DeviceData }
@@ -190,9 +190,10 @@ export function parseTopologyFile(input: unknown, definitions = devices): Topolo
     const keys = definitions[kind].metrics.map((m) => m.key);
     if (!Array.isArray(n.data.visibleMetrics) || n.data.visibleMetrics.length > 2 || n.data.visibleMetrics.some((k) => !keys.includes(k)) || new Set(n.data.visibleMetrics).size !== n.data.visibleMetrics.length) throw new Error('展示参数配置不合法');
     if (!Object.hasOwn(statusLabels, n.data.status)) throw new Error('设备状态不合法');
+    if (n.data.locked !== undefined && typeof n.data.locked !== 'boolean') throw new Error('节点锁定配置必须是布尔值');
     if (n.data.portSpacing !== undefined && (typeof n.data.portSpacing !== 'number' || !Number.isInteger(n.data.portSpacing) || n.data.portSpacing < 18 || n.data.portSpacing > 48)) throw new Error('端口间距必须为 18–48 px 的整数');
     const binding = n.data.binding === undefined ? undefined : parseDataBinding(n.data.binding, keys);
-    return { id, x: coord(n.x), y: coord(n.y), data: { kind, title: str(n.data.title, 60), deviceId: str(n.data.deviceId, 80), address: typeof n.data.address === 'string' ? n.data.address.slice(0, 100) : '', status: n.data.status, visibleMetrics: [...n.data.visibleMetrics], ...(n.data.ports === undefined ? {} : { ports: parseDevicePorts(n.data.ports) }), ...(n.data.portSpacing === undefined ? {} : { portSpacing: n.data.portSpacing }), ...(binding ? { binding } : {}) } };
+    return { id, x: coord(n.x), y: coord(n.y), data: { kind, title: str(n.data.title, 60), deviceId: str(n.data.deviceId, 80), address: typeof n.data.address === 'string' ? n.data.address.slice(0, 100) : '', status: n.data.status, visibleMetrics: [...n.data.visibleMetrics], ...(n.data.ports === undefined ? {} : { ports: parseDevicePorts(n.data.ports) }), ...(n.data.portSpacing === undefined ? {} : { portSpacing: n.data.portSpacing }), ...(binding ? { binding } : {}), ...(n.data.locked === undefined ? {} : { locked: n.data.locked }) } };
   });
   const edges = file.topology.edges.map((e) => {
     const id = uniqueId(e.id);

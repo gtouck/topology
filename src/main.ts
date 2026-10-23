@@ -1,4 +1,4 @@
-import { Graph, Snapline, Selection, type Node, type Edge, type Cell } from '@antv/x6';
+import { Graph, Snapline, type Node, type Edge, type Cell } from '@antv/x6';
 import { icon, iconNames, escapeHtml as esc } from './icons';
 import { cableAppearance, cableAttributes, cablePreview, cableStyles, parseCableAppearance, type CableAppearance } from './cables';
 import { PortEditor } from './port-editor';
@@ -10,7 +10,9 @@ import { downloadBlob, exportFilename, graphSvg, svgToPng, standaloneHtml } from
 import type { ExportState } from './export-svg';
 import { EditorTelemetry, formatMetricValue, type EditorDataMode } from './editor-telemetry';
 import { metricOptions, metricDetails, metricValueHtml } from './device-details';
-import { copySelection, pasteSelection, moveSelection, deleteSelection, type TopologyClipboard } from './editor-commands';
+import { copySelection, pasteSelection, moveSelection, deleteSelection, setPositionLocks, type TopologyClipboard } from './editor-commands';
+import { alignNodes, distributeNodes, alignmentLabels, MAX_LAYOUT_GAP, type Alignment, type LayoutAxis, type LayoutResult } from './layout-commands';
+import { EditorSelection } from './editor-selection';
 import {
   devices, newDevice, linkTypes, statusLabels,
   NODE_WIDTH, NODE_HEIGHT, devicePorts, portSides, assertConnectedPortsPreserved, parseDataBinding,
@@ -45,8 +47,9 @@ let storageConflict = false;
 let clipboard: TopologyClipboard | null = null;
 let pasteCount = 0;
 let canvasTool: 'select' | 'pan' = 'pan';
-let dragSession: { nodeId: string; ids: Set<string>; before: Snapshot; x: number; y: number } | null = null;
+let dragSession: { nodeId: string; ids: Set<string>; before: Snapshot; x: number; y: number; skipped: number } | null = null;
 let applyingDrag = false;
+let contextPoint: { x: number; y: number } | null = null;
 const documentHistories = new Map<string, { undo: TopologyDocument[]; redo: TopologyDocument[] }>();
 const filters = new Set<LinkKind>(['rf', 'if', 'ethernet', 'logical']);
 const telemetry = new EditorTelemetry();
@@ -81,7 +84,7 @@ $('#app').innerHTML = `
         <div class="panel-heading"><div class="panel-title"><span class="panel-symbol">${icon('Network', 18)}</span><h2>拓扑画布</h2><span class="tag">主站</span></div><div class="workspace-summary" aria-label="拓扑计数"><span><strong id="stat-total">0</strong> 节点</span><span><strong id="stat-links">0</strong> 链路</span><button data-action="alarms" id="summary-status" title="查看设备状态"><i></i><strong id="stat-alarms">0</strong> 异常</button></div><div class="panel-heading-actions"><span id="save-status" class="save-status">${icon('Check', 13)}示例布局</span>${button('import', '导入 JSON', 'Upload')}${button('export-options', '导出拓扑', 'Download')}${button('viewer', '在独立展示页打开', 'ExternalLink')}${button('draft-history', '草稿与历史', 'Clock3')}${button('fullscreen', '全屏查看', 'Maximize')}</div></div>
         <div id="draft-notice" class="draft-notice" hidden><span id="draft-message" role="status"></span><button class="button" data-action="retry-draft">重试保存草稿</button><button class="button" data-action="export-current-backup">导出当前图</button><button class="button" data-action="storage-reload">重新读取</button></div>
         <div class="canvas-toolbar"><div class="link-filters" aria-label="链路筛选">${(Object.entries(linkTypes) as [LinkKind, typeof linkTypes[LinkKind]][]).map(([kind, def]) => `<button data-filter="${kind}" class="filter-chip active" aria-pressed="true"><span style="--link-color:${def.color}"></span>${def.label}</button>`).join('')}</div><div class="toolbar-right"><span class="live-label" id="live-label"><i></i>模拟实时</span><span class="toolbar-separator"></span><select id="data-mode" aria-label="数据模式"><option value="simulation">模拟数据</option><option value="external">宿主数据</option></select>${button('pause', '暂停模拟数据', 'Pause')}${button('outage', '模拟节点离线', 'Unplug', '离线演示', 'subtle')}</div></div>
-        <div class="selection-toolbar" id="edit-tools" hidden><div class="canvas-tool-switch" role="group" aria-label="画布工具">${button('tool-select', '拖动空白处框选节点', 'MousePointer2', '框选')}${button('tool-pan', '拖动空白处平移画布，Shift 拖动可框选', 'Hand', '平移')}</div><span class="toolbar-separator"></span>${button('undo', '撤销 Ctrl / ⌘ Z', 'Undo2')}${button('redo', '重做 Ctrl / ⌘ Shift Z', 'Redo2')}<span class="toolbar-separator"></span>${button('select-all', '全选节点 Ctrl / ⌘ A', 'Scan')}${button('copy', '复制节点及内部连线 Ctrl / ⌘ C', 'Copy')}${button('paste', '粘贴 Ctrl / ⌘ V', 'ClipboardPaste')}${button('duplicate', '复制副本 Ctrl / ⌘ D', 'CopyPlus')}${button('delete', '删除选中对象 Delete', 'Trash2')}<span id="selection-count">未选择</span><span class="selection-hint">Ctrl / ⌘ / Shift 点选 · 方向键移动</span></div>
+        <div class="selection-toolbar" id="edit-tools" hidden><div class="canvas-tool-switch" role="group" aria-label="画布工具">${button('tool-select', '拖动空白处框选节点', 'MousePointer2', '框选')}${button('tool-pan', '拖动空白处平移画布，Shift 拖动可框选', 'Hand', '平移')}</div><span class="toolbar-separator"></span>${button('undo', '撤销 Ctrl / ⌘ Z', 'Undo2')}${button('redo', '重做 Ctrl / ⌘ Shift Z', 'Redo2')}<span class="toolbar-separator"></span>${button('select-all', '全选节点 Ctrl / ⌘ A', 'Scan')}${button('copy', '复制节点及内部连线 Ctrl / ⌘ C', 'Copy')}${button('paste', '粘贴 Ctrl / ⌘ V', 'ClipboardPaste')}${button('duplicate', '复制副本 Ctrl / ⌘ D', 'CopyPlus')}${button('delete', '删除选中对象 Delete', 'Trash2')}<span class="toolbar-separator"></span><select id="align-command" aria-label="节点对齐" title="以首个锁定节点为参照；无锁定节点时以选区边界为参照"><option value="">对齐</option>${Object.entries(alignmentLabels).map(([key, label]) => `<option value="${key}">${label}</option>`).join('')}</select><select id="distribute-command" aria-label="节点分布" title="分布只处理未锁定节点"><option value="">分布</option><option value="horizontal">水平等距</option><option value="vertical">垂直等距</option><option value="gap">指定间距…</option></select>${button('lock-selected', '锁定位置，移动和批量删除会跳过', 'LockKeyhole')}${button('unlock-selected', '解锁所选节点', 'LockKeyholeOpen')}<span id="selection-count">未选择</span><span class="selection-hint">Ctrl / ⌘ / Shift 点选 · 方向键移动</span></div>
         <div class="canvas-layout"><div class="canvas-wrap" id="canvas-wrap"><div class="canvas-watermark">BEIJING GROUND STATION <span>站内设备连接示意</span></div><div id="graph" tabindex="0" aria-label="设备拓扑画布"></div><div class="canvas-empty" id="canvas-empty" hidden>${icon('Network', 32)}<strong>从第一台设备开始</strong><p>点击左侧设备，或将设备拖入画布。</p></div><div class="canvas-mode" id="canvas-mode">${icon('LockKeyhole', 13)}首页展示 · 布局已锁定</div><div class="canvas-controls">${button('zoom-out', '缩小', 'Minus')}<span id="zoom-label">100%</span>${button('zoom-in', '放大', 'Plus')}<span class="toolbar-separator"></span>${button('fit', '适应画布', 'Scan')}</div></div><aside id="inspector" class="inspector" aria-label="设备详情"></aside></div>
         <div class="panel-footer"><span><span class="tiny-dot" id="footer-dot"></span><span id="footer-mode">监控模式</span><span class="footer-divider">/</span><span id="footer-hint">点击设备查看参数 · 滚轮缩放 · 拖动画布平移</span></span><span id="update-time">数据更新 --:--:--</span></div>
       </section>
@@ -91,6 +94,7 @@ $('#app').innerHTML = `
   <input type="file" id="import-file" accept=".json,application/json" hidden />
   <dialog id="modal"><div class="modal-heading"><h2 id="modal-title"></h2>${button('close-modal', '关闭', 'X')}</div><div id="modal-content"></div><div class="modal-footer"><button class="button primary" data-action="close-modal">知道了</button></div></dialog>
   <div class="toast" id="toast" role="status" hidden></div>
+  <div id="canvas-context-menu" class="canvas-context-menu" role="menu" aria-label="画布菜单" hidden></div>
 `;
 
 function runtimeStatus(node: Node): DeviceStatus {
@@ -122,7 +126,7 @@ const graph = new Graph({
   scaling: { min: .25, max: 2 },
   panning: { enabled: true, eventTypes: ['leftMouseDown', 'mouseWheelDown'] },
   mousewheel: { enabled: true, modifiers: null, minScale: .25, maxScale: 2, factor: 1.08 },
-  interacting: () => ({ nodeMovable: mode === 'edit', edgeMovable: false, edgeLabelMovable: false, magnetConnectable: mode === 'edit', arrowheadMovable: mode === 'edit', vertexMovable: mode === 'edit', vertexAddable: mode === 'edit', vertexDeletable: mode === 'edit' }),
+  interacting: (view) => ({ nodeMovable: mode === 'edit' && !view.cell.getData<DeviceData>()?.locked, edgeMovable: false, edgeLabelMovable: false, magnetConnectable: mode === 'edit', arrowheadMovable: mode === 'edit', vertexMovable: mode === 'edit', vertexAddable: mode === 'edit', vertexDeletable: mode === 'edit' }),
   connecting: {
     snap: { radius: 24 }, allowBlank: false, allowLoop: false, allowNode: false, allowEdge: false,
     allowMulti: 'withPort', highlight: true, anchor: 'center', connectionPoint: 'anchor',
@@ -138,7 +142,7 @@ const graph = new Graph({
   highlighting: { magnetAvailable: { name: 'stroke', args: { attrs: { stroke: '#21957b', strokeWidth: 3 } } }, magnetAdsorbed: { name: 'stroke', args: { attrs: { stroke: '#21957b', strokeWidth: 3 } } } },
 });
 graph.use(new Snapline({ enabled: true, sharp: true, tolerance: 8 }));
-graph.use(new Selection({
+graph.use(new EditorSelection({
   enabled: false, rubberband: true, rubberNode: true, rubberEdge: false,
   multiple: true, multipleSelectionModifiers: ['ctrl', 'meta', 'shift'],
   showNodeSelectionBox: true, showEdgeSelectionBox: false,
@@ -160,7 +164,7 @@ function renderCable(edge: Edge) {
 
 function addDevice(record: DeviceRecord) {
   return addRenderedNode(graph, record, {
-    definitions: devices, status: runtimeStatus,
+    definitions: devices, editor: true, status: runtimeStatus,
     value: (node, key) => runtimeStatus(node) === 'offline' ? '—' : metricValue(node, key),
     selected: (node) => mode === 'edit' ? graph.isSelected(node) : selected?.id === node.id,
     statusLabel: runtimeLabel,
@@ -214,15 +218,21 @@ function updateHistoryButtons() {
   const redo = document.querySelector<HTMLButtonElement>('[data-action="redo"]');
   if (redo) redo.disabled = !redoStack.length;
   const del = document.querySelector<HTMLButtonElement>('[data-action="delete"]');
-  const cells = selectedCells(), nodes = cells.filter((cell) => cell.isNode()).length;
-  if (del) del.disabled = !cells.length;
+  const cells = selectedCells(), nodeCells = cells.filter((cell) => cell.isNode()), nodes = nodeCells.length;
+  const locked = nodeCells.filter((node) => node.getData<DeviceData>().locked).length, movable = nodes - locked;
+  if (del) del.disabled = !cells.some((cell) => cell.isEdge() || !cell.getData<DeviceData>().locked);
   for (const action of ['copy', 'duplicate']) {
     const button = document.querySelector<HTMLButtonElement>(`[data-action="${action}"]`);
     if (button) button.disabled = nodes === 0;
   }
   $<HTMLButtonElement>('[data-action="paste"]').disabled = !clipboard;
   const edges = cells.length - nodes;
-  $('#selection-count').textContent = cells.length ? `已选 ${nodes} 节点${edges ? ` / ${edges} 连线` : ''}` : '未选择';
+  $('#selection-count').textContent = cells.length ? `已选 ${nodes} 节点${edges ? ` / ${edges} 连线` : ''}${locked ? ` · ${locked} 已锁定` : ''}` : '未选择';
+  $<HTMLSelectElement>('#align-command').disabled = nodes < 2 || movable === 0;
+  $<HTMLSelectElement>('#distribute-command').disabled = movable < 2;
+  for (const axis of ['horizontal', 'vertical']) $<HTMLOptionElement>(`#distribute-command option[value="${axis}"]`).disabled = movable < 3;
+  $<HTMLButtonElement>('[data-action="lock-selected"]').disabled = movable === 0;
+  $<HTMLButtonElement>('[data-action="unlock-selected"]').disabled = locked === 0;
 }
 function updateSaveStatus() {
   if (!activeDocument) return;
@@ -277,6 +287,7 @@ function renderSidebar() {
 }
 
 function setMode(next: Mode) {
+  closeContextMenu();
   finishGroupDrag();
   const previous = selectedCells();
   mode = next;
@@ -423,7 +434,7 @@ function renderInspector() {
   const def = devices[data.kind];
   const status = runtimeStatus(node);
   const connected = graph.getConnectedEdges(node) || [];
-  panel.innerHTML = `<div class="inspector-header"><span>${mode === 'edit' ? '设备属性' : '设备详情'}</span>${button('deselect', '关闭详情', 'X')}</div><div class="detail-identity"><span class="detail-device-icon kind-${data.kind}">${icon(def.icon, 28)}</span><h3>${esc(data.title)}</h3><span class="type-caption">${esc(def.model)}</span><span class="status-pill ${status}" id="detail-status"><i></i>${esc(runtimeLabel(node))}</span></div>${mode === 'edit' ? `<div class="detail-section"><h4>基本信息</h4><label class="field">设备名称<input id="device-title" maxlength="60" value="${esc(data.title)}" /></label><label class="field">绑定设备 ID<input id="device-id" maxlength="80" value="${esc(data.deviceId)}" /></label><label class="field">管理地址<input id="device-address" maxlength="100" value="${esc(data.address)}" /></label><label class="field">演示状态<select id="device-status">${Object.entries(statusLabels).map(([key, label]) => `<option value="${key}" ${key === data.status ? 'selected' : ''}>${label}</option>`).join('')}</select></label><h4 class="metrics-heading">卡片展示参数 <span>最多 2 项</span></h4><div class="metric-options">${metricOptions(data, def)}</div>${renderBindingControls(data)}<button class="button primary full-width" data-action="apply-device">${icon('Check', 15)}应用修改</button></div>${renderDevicePorts(node)}<button class="button danger inspector-bottom-button" data-action="delete">${icon('Trash2', 15)}删除设备及连线</button>` : `${metricDetails(def, (key) => status === 'offline' ? '—' : metricValue(node, key), dataModeLabel())}${renderDevicePorts(node)}<div class="detail-section"><h4>设备信息</h4><div class="detail-info"><div><span>设备 ID</span><strong>${esc(data.deviceId)}</strong></div><div><span>管理地址</span><strong>${esc(data.address || '未配置')}</strong></div><div><span>关联链路</span><strong>${connected.length} 条</strong></div></div></div><div class="detail-section"><h4>连接关系</h4><div class="connection-list">${connected.map((edge) => { const other = graph.getCellById(edge.getSourceCellId() === node.id ? edge.getTargetCellId() : edge.getSourceCellId()); return `<button data-select-cell="${esc(edge.id)}"><span style="background:${linkTypes[(edge.getData()?.kind || 'ethernet') as LinkKind].color}"></span>${esc(other?.getData<DeviceData>()?.title || '未连接')}${icon('ChevronRight', 13)}</button>`; }).join('') || '<p class="muted">暂无连接</p>'}</div></div>`}`;
+  panel.innerHTML = `<div class="inspector-header"><span>${mode === 'edit' ? '设备属性' : '设备详情'}</span>${button('deselect', '关闭详情', 'X')}</div><div class="detail-identity"><span class="detail-device-icon kind-${data.kind}">${icon(def.icon, 28)}</span><h3>${esc(data.title)}</h3><span class="type-caption">${esc(def.model)}</span><span class="status-pill ${status}" id="detail-status"><i></i>${esc(runtimeLabel(node))}</span></div>${mode === 'edit' ? `<div class="node-lock-status">${icon(data.locked ? 'LockKeyhole' : 'Move', 14)}<span>${data.locked ? '位置已锁定' : '位置可编辑'}</span><button data-action="toggle-node-lock">${data.locked ? '解锁' : '锁定'}</button></div>` : ''}${mode === 'edit' ? `<div class="detail-section"><h4>基本信息</h4><label class="field">设备名称<input id="device-title" maxlength="60" value="${esc(data.title)}" /></label><label class="field">绑定设备 ID<input id="device-id" maxlength="80" value="${esc(data.deviceId)}" /></label><label class="field">管理地址<input id="device-address" maxlength="100" value="${esc(data.address)}" /></label><label class="field">演示状态<select id="device-status">${Object.entries(statusLabels).map(([key, label]) => `<option value="${key}" ${key === data.status ? 'selected' : ''}>${label}</option>`).join('')}</select></label><h4 class="metrics-heading">卡片展示参数 <span>最多 2 项</span></h4><div class="metric-options">${metricOptions(data, def)}</div>${renderBindingControls(data)}<button class="button primary full-width" data-action="apply-device">${icon('Check', 15)}应用修改</button></div>${renderDevicePorts(node)}<button class="button danger inspector-bottom-button" data-action="delete">${icon('Trash2', 15)}删除设备及连线</button>` : `${metricDetails(def, (key) => status === 'offline' ? '—' : metricValue(node, key), dataModeLabel())}${renderDevicePorts(node)}<div class="detail-section"><h4>设备信息</h4><div class="detail-info"><div><span>设备 ID</span><strong>${esc(data.deviceId)}</strong></div><div><span>管理地址</span><strong>${esc(data.address || '未配置')}</strong></div><div><span>关联链路</span><strong>${connected.length} 条</strong></div></div></div><div class="detail-section"><h4>连接关系</h4><div class="connection-list">${connected.map((edge) => { const other = graph.getCellById(edge.getSourceCellId() === node.id ? edge.getTargetCellId() : edge.getSourceCellId()); return `<button data-select-cell="${esc(edge.id)}"><span style="background:${linkTypes[(edge.getData()?.kind || 'ethernet') as LinkKind].color}"></span>${esc(other?.getData<DeviceData>()?.title || '未连接')}${icon('ChevronRight', 13)}</button>`; }).join('') || '<p class="muted">暂无连接</p>'}</div></div>`}`;
   updateTrend();
 }
 
@@ -665,10 +676,13 @@ function renderBindingControls(data: DeviceData) {
 }
 
 function executeEditorCommand(document: TopologyDocument, selectIds: string[] = []) {
+  if (mode !== 'edit') return false;
   finishGroupDrag(); flushHistory();
+  if (documentSignature(document) === documentSignature(captureDocument())) return false;
   applyEditorDocument(document);
   graph.resetSelection(selectIds.map((id) => graph.getCellById(id)).filter(Boolean));
   refreshSelection(); flushHistory();
+  return true;
 }
 
 function copyNodes() {
@@ -678,13 +692,14 @@ function copyNodes() {
   toast(`已复制 ${result.nodes.length} 个节点和 ${result.edges.length} 条内部连线`);
 }
 
-function pasteNodes(duplicate = false) {
+function pasteNodes(duplicate = false, at?: { x: number; y: number }) {
   if (mode !== 'edit') return;
   const content = duplicate ? copySelection(captureDocument(), new Set(selectedCells().map((cell) => cell.id))) : clipboard;
   if (!content) return;
   try {
     const offset = duplicate ? 40 : (pasteCount + 1) * 40;
-    const result = pasteSelection(captureDocument(), content, { x: offset, y: offset });
+    const shift = at ? { x: Math.round(at.x / 10) * 10 - Math.min(...content.nodes.map((node) => node.x)), y: Math.round(at.y / 10) * 10 - Math.min(...content.nodes.map((node) => node.y)) } : { x: offset, y: offset };
+    const result = pasteSelection(captureDocument(), content, shift);
     executeEditorCommand(result.document, result.nodeIds);
     if (!duplicate) pasteCount++;
     if (result.nodeIds.length) graph.centerCell(graph.getCellById(result.nodeIds[0]));
@@ -695,8 +710,11 @@ function pasteNodes(duplicate = false) {
 function deleteSelected() {
   if (mode !== 'edit') return;
   const cells = selectedCells(); if (!cells.length) return;
-  executeEditorCommand(deleteSelection(captureDocument(), new Set(cells.map((cell) => cell.id))));
-  toast('已删除选中对象及关联连线，可一步撤销');
+  const skipped = cells.filter((cell) => cell.isNode() && cell.getData<DeviceData>().locked);
+  const result = deleteSelection(captureDocument(), new Set(cells.map((cell) => cell.id)));
+  const keptIds = skipped.map((cell) => cell.id);
+  const changed = executeEditorCommand(result, keptIds);
+  toast(`${changed ? '已删除选中对象及关联连线，可一步撤销' : '没有可删除的对象'}${skipped.length ? `；跳过 ${skipped.length} 个锁定节点` : ''}`);
 }
 
 function moveSelected(dx: number, dy: number) {
@@ -706,12 +724,121 @@ function moveSelected(dx: number, dy: number) {
   try {
     const document = captureDocument(); document.topology = moveSelection(document.topology, new Set(ids), { x: dx, y: dy });
     executeEditorCommand(document, ids);
+    const skipped = document.topology.nodes.filter((node) => ids.includes(node.id) && node.data.locked).length;
+    if (skipped) toast(`移动已跳过 ${skipped} 个锁定节点`);
   } catch (error) { toast(error instanceof Error ? error.message : '无法移动', true); }
 }
 
+function selectedIds() { return new Set(selectedCells().map((cell) => cell.id)); }
+function setSelectedLock(locked: boolean) {
+  if (mode !== 'edit') return;
+  const cells = selectedCells(), nodes = cells.filter((cell) => cell.isNode());
+  if (!nodes.length) return;
+  const changed = nodes.filter((node) => !!node.getData<DeviceData>().locked !== locked).length;
+  executeEditorCommand(setPositionLocks(captureDocument(), selectedIds(), locked), cells.map((cell) => cell.id));
+  toast(changed ? `已${locked ? '锁定' : '解锁'} ${changed} 个节点的位置` : '所选节点的锁定状态未改变');
+}
+
+function applyLayout(result: LayoutResult, label: string) {
+  if (result.moved) executeEditorCommand(result.document, selectedCells().map((cell) => cell.id));
+  toast(`${result.moved ? `${label}：调整 ${result.moved} 个节点` : '节点已处于目标布局'}${result.skipped ? `；跳过 ${result.skipped} 个锁定节点` : ''}`);
+}
+function runAlignment(alignment: Alignment) {
+  if (mode !== 'edit') return;
+  try { applyLayout(alignNodes(captureDocument(), selectedIds(), alignment), alignmentLabels[alignment]); }
+  catch (error) { toast(error instanceof Error ? error.message : '对齐失败', true); }
+}
+function runDistribution(axis: LayoutAxis, gap?: number) {
+  if (mode !== 'edit') return false;
+  try {
+    applyLayout(distributeNodes(captureDocument(), selectedIds(), axis, gap), gap === undefined ? '等距分布' : `间距 ${gap} px`);
+    return true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '分布失败';
+    const inline = document.querySelector('#spacing-error'); if (inline) inline.textContent = message;
+    toast(message, true); return false;
+  }
+}
+function showSpacingDialog() {
+  if (mode !== 'edit') return;
+  const nodes = selectedCells().filter((cell) => cell.isNode()), movable = nodes.filter((node) => !node.getData<DeviceData>().locked);
+  if (movable.length < 2) { toast('指定间距至少需要两个未锁定节点', true); return; }
+  showModal('指定节点间距', `<p class="modal-description">固定排序后的第一个节点，按实际尺寸依次排布，另一坐标轴保持原位。${nodes.length - movable.length ? `将跳过 ${nodes.length - movable.length} 个锁定节点。` : ''}</p><label class="field">方向<select id="layout-axis"><option value="horizontal">水平间距</option><option value="vertical">垂直间距</option></select></label><label class="field">节点之间的空隙（px）<input id="layout-gap" type="number" min="0" max="${MAX_LAYOUT_GAP}" step="any" value="24" /></label><p id="spacing-error" class="spacing-error" role="alert"></p><button class="button primary" data-action="apply-spacing">应用间距</button>`);
+}
+
+function closeContextMenu(focus = false) {
+  const menu = $('#canvas-context-menu');
+  if (menu.hidden) return;
+  menu.hidden = true; contextPoint = null;
+  if (focus) $('#graph').focus({ preventScroll: true });
+}
+function openContextMenu(x: number, y: number, cell: Cell | null) {
+  finishGroupDrag(); closeContextMenu();
+  if (!cell) selectCell(null);
+  else if (mode === 'edit' ? !graph.isSelected(cell) : selected?.id !== cell.id) selectCell(cell);
+  const nodes = selectedCells().filter((item) => item.isNode()), locked = nodes.filter((node) => node.getData<DeviceData>().locked).length;
+  const movable = nodes.length - locked, deletable = selectedCells().some((item) => item.isEdge() || !item.getData<DeviceData>().locked);
+  const item = (command: string, label: string, shortcut = '', disabled = false) => `<button type="button" role="menuitem" data-context-command="${command}" ${disabled ? 'disabled' : ''}><span>${esc(label)}</span>${shortcut ? `<kbd>${esc(shortcut)}</kbd>` : ''}</button>`;
+  const divider = '<div class="context-divider" role="separator"></div>';
+  let content = '';
+  if (mode === 'edit') {
+    content = item('copy', '复制节点及内部连线', 'Ctrl / ⌘ C', !nodes.length) + item('paste', '粘贴到此处', 'Ctrl / ⌘ V', !clipboard) + item('duplicate', '创建副本', 'Ctrl / ⌘ D', !nodes.length) + item('delete', '删除所选对象', 'Delete', !deletable) + divider;
+    content += item('lock-selected', '锁定节点位置', '', !movable) + item('unlock-selected', '解锁节点位置', '', !locked);
+    content += `<div class="context-label">对齐${locked ? ' · 以首个锁定节点为参照' : ' · 以选区边界为参照'}</div><div class="context-align-grid">${Object.entries(alignmentLabels).map(([key, label]) => item(`align:${key}`, label, '', nodes.length < 2 || !movable)).join('')}</div>`;
+    content += item('distribute:horizontal', '水平等距分布', '', movable < 3) + item('distribute:vertical', '垂直等距分布', '', movable < 3) + item('spacing', '指定节点间距…', '', movable < 2) + divider + item('select-all', '全选节点', 'Ctrl / ⌘ A');
+  }
+  content += item('fit', '适应画布') + item('export-options', '导出拓扑…');
+  const menu = $('#canvas-context-menu'); menu.innerHTML = content; menu.hidden = false;
+  menu.style.left = '0px'; menu.style.top = '0px';
+  const bounds = menu.getBoundingClientRect();
+  menu.style.left = `${Math.max(6, Math.min(x, window.innerWidth - bounds.width - 6))}px`;
+  menu.style.top = `${Math.max(6, Math.min(y, window.innerHeight - bounds.height - 6))}px`;
+  const local = graph.clientToLocal(x, y); contextPoint = { x: local.x, y: local.y };
+  menu.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus({ preventScroll: true });
+}
+
+$('#align-command').addEventListener('change', (event) => {
+  const select = event.target as HTMLSelectElement, value = select.value; select.value = '';
+  if (value) runAlignment(value as Alignment);
+});
+$('#distribute-command').addEventListener('change', (event) => {
+  const select = event.target as HTMLSelectElement, value = select.value; select.value = '';
+  if (value === 'gap') showSpacingDialog();
+  else if (value) runDistribution(value as LayoutAxis);
+});
+$('#canvas-context-menu').addEventListener('click', (event) => {
+  const button = (event.target as Element).closest<HTMLButtonElement>('button[data-context-command]');
+  if (!button || button.disabled) return;
+  const command = button.dataset.contextCommand!, point = contextPoint; closeContextMenu();
+  if (command.startsWith('align:')) runAlignment(command.slice(6) as Alignment);
+  else if (command.startsWith('distribute:')) runDistribution(command.slice(11) as LayoutAxis);
+  else if (command === 'spacing') showSpacingDialog();
+  else if (command === 'paste') pasteNodes(false, point || undefined);
+  else actions[command]?.();
+});
+$('#canvas-context-menu').addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeContextMenu(true); return; }
+  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+  event.preventDefault(); event.stopPropagation();
+  const buttons = [...$('#canvas-context-menu').querySelectorAll<HTMLButtonElement>('button:not(:disabled)')];
+  const current = buttons.indexOf(document.activeElement as HTMLButtonElement);
+  const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (current + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
+  buttons[next]?.focus();
+});
+document.addEventListener('mousedown', (event) => { if (!(event.target as Element).closest('#canvas-context-menu')) closeContextMenu(); });
+window.addEventListener('resize', () => closeContextMenu());
+window.addEventListener('scroll', (event) => { if (!$('#canvas-context-menu').contains(event.target as globalThis.Node)) closeContextMenu(); }, true);
+
 function finishGroupDrag() {
   if (!dragSession) return;
+  const session = dragSession;
   dragSession = null; flushHistory();
+  const changed = session.before.nodes.some((node) => {
+    if (!session.ids.has(node.id)) return false;
+    const cell = graph.getCellById(node.id);
+    return cell?.isNode() && (cell.getPosition().x !== node.x || cell.getPosition().y !== node.y);
+  });
+  if (changed && session.skipped) toast(`移动已跳过 ${session.skipped} 个锁定节点`);
 }
 
 function captureExportState(): ExportState {
@@ -756,6 +883,14 @@ async function exportTopology(format: 'json' | 'svg' | 'png' | 'html') {
 }
 
 const actions: Record<string, () => void> = {
+  'lock-selected': () => setSelectedLock(true),
+  'unlock-selected': () => setSelectedLock(false),
+  'toggle-node-lock': () => { if (selected?.isNode()) setSelectedLock(!selected.getData<DeviceData>().locked); },
+  'apply-spacing': () => {
+    const raw = $<HTMLInputElement>('#layout-gap').value.trim();
+    if (!raw) { $('#spacing-error').textContent = '请输入节点间距'; return; }
+    if (runDistribution($<HTMLSelectElement>('#layout-axis').value as LayoutAxis, Number(raw))) $<HTMLDialogElement>('#modal').close();
+  },
   'tool-select': () => { canvasTool = 'select'; updateCanvasTool(); },
   'tool-pan': () => { canvasTool = 'pan'; updateCanvasTool(); },
   'select-all': () => { if (mode === 'edit') graph.resetSelection(graph.getNodes()); },
@@ -955,7 +1090,15 @@ $<HTMLInputElement>('#import-file').addEventListener('change', async (event) => 
 });
 document.addEventListener('keydown', (event) => {
   const target = event.target as HTMLElement;
+  if (target.closest('#canvas-context-menu')) return;
+  if (target.id === 'layout-gap' && event.key === 'Enter') { event.preventDefault(); actions['apply-spacing'](); return; }
+  if (!$('#canvas-context-menu').hidden && event.key === 'Escape') { event.preventDefault(); closeContextMenu(true); return; }
   if (target.closest('input, textarea, select, [contenteditable="true"]') || $<HTMLDialogElement>('#modal').open) return;
+  if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+    event.preventDefault();
+    const bounds = $('#graph').getBoundingClientRect();
+    openContextMenu(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2, selectedCells()[0] || null); return;
+  }
   const key = event.key.toLowerCase();
   if (mode === 'edit' && (event.ctrlKey || event.metaKey) && ['a', 'c', 'v', 'd'].includes(key)) {
     event.preventDefault();
@@ -978,12 +1121,12 @@ graph.on('node:click', ({ node }) => { if (mode !== 'edit') selectCell(node); })
 graph.on('edge:click', ({ edge }) => { if (mode !== 'edit') selectCell(edge); });
 graph.on('blank:click', () => selectCell(null));
 graph.on('node:mousedown', ({ node, e }) => {
-  if (mode !== 'edit' || e.button !== 0 || (e.target as Element).closest('.x6-port')) return;
+  if (mode !== 'edit' || node.getData<DeviceData>().locked || e.button !== 0 || (e.target as Element).closest('.x6-port')) return;
   if ((e.ctrlKey || e.metaKey || e.shiftKey) && !graph.isSelected(node)) return;
   if (!graph.isSelected(node)) graph.resetSelection([node]);
   flushHistory(); clearTimeout(recordTimer); clearTimeout(draftSaveTimer);
   const position = node.getPosition();
-  dragSession = { nodeId: node.id, ids: new Set(selectedCells().filter((cell) => cell.isNode()).map((cell) => cell.id)), before: snapshot(), x: position.x, y: position.y };
+  dragSession = { nodeId: node.id, ids: new Set(selectedCells().filter((cell) => cell.isNode() && !cell.getData<DeviceData>().locked).map((cell) => cell.id)), before: snapshot(), x: position.x, y: position.y, skipped: selectedCells().filter((cell) => cell.isNode() && cell.getData<DeviceData>().locked).length };
 });
 graph.on('node:change:position', ({ node }) => {
   if (!dragSession || applyingDrag || node.id !== dragSession.nodeId) return;
@@ -1008,6 +1151,9 @@ graph.on('node:change:position', ({ node }) => {
   } finally { applyingDrag = false; }
 });
 graph.on('node:mouseup', finishGroupDrag);
+graph.on('node:contextmenu', ({ node, e }) => { e.preventDefault(); e.stopPropagation(); openContextMenu(e.clientX, e.clientY, node); });
+graph.on('edge:contextmenu', ({ edge, e }) => { e.preventDefault(); e.stopPropagation(); openContextMenu(e.clientX, e.clientY, edge); });
+graph.on('blank:contextmenu', ({ e }) => { e.preventDefault(); e.stopPropagation(); openContextMenu(e.clientX, e.clientY, null); });
 document.addEventListener('mouseup', () => { if (dragSession) queueMicrotask(finishGroupDrag); });
 window.addEventListener('blur', finishGroupDrag);
 graph.on('node:added', recordChange);
@@ -1027,7 +1173,8 @@ graph.on('edge:connected', ({ edge }) => {
   edge.setVisible(filters.has(port.kind), { runtime: true });
   updateRuntime(); flushHistory(); selectCell(edge); toast(`已建立${linkTypes[port.kind].label}，可手动调整走线`);
 });
-graph.on('scale', updateZoom);
+graph.on('scale', () => { closeContextMenu(); updateZoom(); });
+graph.on('translate', () => closeContextMenu());
 document.addEventListener('fullscreenchange', () => setTimeout(fitGraph, 60));
 let reloadRequested = false;
 window.addEventListener('beforeunload', (event) => {

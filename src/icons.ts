@@ -4,7 +4,7 @@ import {
   HelpCircle, Plus, Minus, Maximize, Scan, MousePointer2, Hand, Undo2, Redo2,
   Save, Download, Upload, Trash2, X, Check, RefreshCw, Pause, Play, LockKeyhole,
   PencilRuler, CircleAlert, ChevronRight, CircleCheck, Clock3, Unplug, Info,
-  Layers, SlidersHorizontal, RotateCcw, Radio, Move, ExternalLink, Copy, ClipboardPaste, CopyPlus,
+  Layers, SlidersHorizontal, RotateCcw, Radio, Move, ExternalLink, Copy, ClipboardPaste, CopyPlus, LockKeyholeOpen,
 } from 'lucide';
 
 const icons = {
@@ -13,7 +13,7 @@ const icons = {
   Minus, Maximize, Scan, MousePointer2, Hand, Undo2, Redo2, Save, Download,
   Upload, Trash2, X, Check, RefreshCw, Pause, Play, LockKeyhole, PencilRuler,
   CircleAlert, ChevronRight, CircleCheck, Clock3, Unplug, Info, Layers,
-  SlidersHorizontal, RotateCcw, Radio, Move, ExternalLink, Copy, ClipboardPaste, CopyPlus,
+  SlidersHorizontal, RotateCcw, Radio, Move, ExternalLink, Copy, ClipboardPaste, CopyPlus, LockKeyholeOpen,
 };
 export const iconNames = [
   'Activity', 'SatelliteDish', 'Cpu', 'Server', 'Router', 'Network', 'Zap', 'LayoutDashboard',

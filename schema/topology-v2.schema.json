@@ -386,6 +386,10 @@
         },
         "binding": {
           "$ref": "#/$defs/binding"
+        },
+        "locked": {
+          "type": "boolean",
+          "description": "Lock node position in the editor; omitted means unlocked."
         }
       },
       "required": [

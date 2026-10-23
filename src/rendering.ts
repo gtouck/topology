@@ -4,6 +4,7 @@ import { deviceGeometry, devicePorts, devices, linkTypes, statusLabels, type Dev
 
 export interface RenderContext {
   definitions: Record<string, DeviceDefinition>;
+  editor?: boolean;
   status(node: Node): DeviceStatus;
   value(node: Node, key: string): string;
   selected?(node: Node): boolean;
@@ -27,8 +28,9 @@ export function registerTopologyShapes() {
       el.className = `device-card ${status}${ctx?.selected?.(node) ? ' selected' : ''}`;
       el.dataset.deviceNode = node.id;
       el.dataset.metricCount = String(data.visibleMetrics.length);
+      el.dataset.locked = String(data.locked === true);
       const ports = devicePorts(data, ctx?.definitions || devices);
-      el.innerHTML = `<div class="device-card-heading"><span class="device-glyph kind-${esc(data.kind)}">${icon(def.icon, 19)}</span><div><strong title="${esc(data.title)}">${esc(data.title)}</strong><small>${esc(def.en)}</small></div><span class="device-status-dot" title="${statusLabels[status]}"></span></div>${data.visibleMetrics.length ? `<div class="device-metrics">${data.visibleMetrics.map((key) => {
+      el.innerHTML = `${data.locked && ctx?.editor ? `<span class="device-lock-indicator" hidden title="位置已锁定" aria-label="位置已锁定">${icon('LockKeyhole', 10)}</span>` : ''}<div class="device-card-heading"><span class="device-glyph kind-${esc(data.kind)}">${icon(def.icon, 19)}</span><div><strong title="${esc(data.title)}">${esc(data.title)}</strong><small>${esc(def.en)}</small></div><span class="device-status-dot" title="${statusLabels[status]}"></span></div>${data.visibleMetrics.length ? `<div class="device-metrics">${data.visibleMetrics.map((key) => {
         const metric = def.metrics.find((m) => m.key === key)!;
         const value = ctx?.value(node, key) ?? '—';
         return `<div><span>${esc(metric.label)}</span><strong data-metric="${esc(key)}">${esc(value)}<small>${value === '—' ? '' : esc(metric.unit)}</small></strong></div>`;

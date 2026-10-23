@@ -14,10 +14,23 @@ export function copySelection(document: TopologyDocument, selectedIds: Set<strin
 
 export function moveSelection(snapshot: Snapshot, ids: Set<string>, offset: Offset): Snapshot {
   if (!Number.isFinite(offset.x) || !Number.isFinite(offset.y)) throw new Error('移动距离不合法');
+  return positionNodes(snapshot, new Map(snapshot.nodes.filter((node) => ids.has(node.id) && !node.data.locked).map((node) => [node.id, { x: node.x + offset.x, y: node.y + offset.y }])));
+}
+
+/** Shared layout policy: keep manual bends unless both ends move equally. */
+export function positionNodes(snapshot: Snapshot, positions: ReadonlyMap<string, Offset>): Snapshot {
   const next = structuredClone(snapshot);
-  for (const node of next.nodes) if (ids.has(node.id)) { node.x += offset.x; node.y += offset.y; }
-  for (const edge of next.edges) if (ids.has(edge.source.cell) && ids.has(edge.target.cell)) {
-    edge.vertices.forEach((point) => { point.x += offset.x; point.y += offset.y; });
+  const deltas = new Map<string, Offset>();
+  for (const node of next.nodes) {
+    const target = positions.get(node.id);
+    if (!target || node.data.locked) continue;
+    const dx = target.x - node.x, dy = target.y - node.y;
+    if (dx || dy) deltas.set(node.id, { x: dx, y: dy });
+    node.x = target.x; node.y = target.y;
+  }
+  for (const edge of next.edges) {
+    const source = deltas.get(edge.source.cell), target = deltas.get(edge.target.cell);
+    if (source && target && Math.abs(source.x - target.x) < 1e-9 && Math.abs(source.y - target.y) < 1e-9) edge.vertices.forEach((point) => { point.x += source.x; point.y += source.y; });
   }
   if (next.nodes.some((node) => !valid(node.x) || !valid(node.y)) || next.edges.some((edge) => edge.vertices.some((point) => !valid(point.x) || !valid(point.y)))) throw new Error('移动位置超出坐标范围');
   return next;
@@ -25,8 +38,18 @@ export function moveSelection(snapshot: Snapshot, ids: Set<string>, offset: Offs
 
 export function deleteSelection(document: TopologyDocument, ids: Set<string>): TopologyDocument {
   const next = structuredClone(document);
-  next.topology.nodes = next.topology.nodes.filter((node) => !ids.has(node.id));
-  next.topology.edges = next.topology.edges.filter((edge) => !ids.has(edge.id) && !ids.has(edge.source.cell) && !ids.has(edge.target.cell));
+  const removable = new Set(next.topology.nodes.filter((node) => ids.has(node.id) && !node.data.locked).map((node) => node.id));
+  next.topology.nodes = next.topology.nodes.filter((node) => !removable.has(node.id));
+  next.topology.edges = next.topology.edges.filter((edge) => !ids.has(edge.id) && !removable.has(edge.source.cell) && !removable.has(edge.target.cell));
+  return next;
+}
+
+export function setPositionLocks(document: TopologyDocument, ids: Set<string>, locked: boolean) {
+  const next = structuredClone(document);
+  for (const node of next.topology.nodes) if (ids.has(node.id)) {
+    if (locked) node.data.locked = true;
+    else delete node.data.locked;
+  }
   return next;
 }
 
@@ -56,6 +79,7 @@ export function pasteSelection(document: TopologyDocument, clipboard: TopologyCl
   const nodes = clipboard.nodes.map((source) => {
     const node = structuredClone(source), id = freshId('node');
     idMap.set(source.id, id); node.id = id;
+    delete node.data.locked;
     node.data.kind = kinds.get(node.data.kind) || node.data.kind;
     const title = Array.from(node.data.title);
     while (title.join('').length > 57) title.pop();
