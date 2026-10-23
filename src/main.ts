@@ -13,6 +13,9 @@ import { metricOptions, metricDetails, metricValueHtml } from './device-details'
 import { copySelection, pasteSelection, moveSelection, deleteSelection, setPositionLocks, type TopologyClipboard } from './editor-commands';
 import { alignNodes, distributeNodes, alignmentLabels, MAX_LAYOUT_GAP, type Alignment, type LayoutAxis, type LayoutResult } from './layout-commands';
 import { EditorSelection } from './editor-selection';
+import { WorkbenchLayout } from './workbench-layout';
+import { clearFieldErrors, showFieldError } from './ui-forms';
+import { categoryLabel, findDocuments, documentThumbnail, type LibrarySort } from './library-presentation';
 import {
   devices, newDevice, linkTypes, statusLabels,
   NODE_WIDTH, NODE_HEIGHT, devicePorts, portSides, assertConnectedPortsPreserved, parseDataBinding,
@@ -20,6 +23,7 @@ import {
   type LinkRecord, type Snapshot, type DeviceStatus,
 } from './topology';
 import './style.css';
+import './workbench.css';
 
 type Mode = 'monitor' | 'edit';
 let mode: Mode = 'monitor';
@@ -62,31 +66,34 @@ const button = (action: string, title: string, glyph: Parameters<typeof icon>[0]
   `<button type="button" data-action="${action}" title="${title}" aria-label="${title}" class="${text ? 'button' : 'icon-button'} ${cls}">${icon(glyph)}${text ? `<span>${text}</span>` : ''}</button>`;
 
 $('#app').innerHTML = `
-  <aside class="sidebar">
+  <aside class="sidebar" id="sidebar" aria-label="节点库与导航">
+    <button class="icon-button drawer-close" data-action="close-sidebar" aria-label="关闭节点库">${icon('X')}</button>
     <a class="brand" href="/" aria-label="Topology 首页"><span class="brand-mark">${icon('Network', 25)}</span><span>topology<span class="brand-dot">.</span><small>拓扑制作工作台</small></span></a>
     <div class="workspace-label">WORKSPACE <span>01</span></div>
-    <button class="station-picker" data-action="library"><span class="station-avatar">BJ</span><span><strong>北京地面站</strong><small>卫星通信 · 主站</small></span>${icon('ChevronDown', 14)}</button>
-    <div class="nav-label">工作空间</div><button class="nav-item" data-action="library">${icon('Layers')}<span>拓扑库</span><span class="nav-shortcut" id="library-count">1</span></button>
+    <button class="station-picker" data-action="library" title="打开拓扑库"><span class="station-avatar">${icon('Network', 17)}</span><span><strong>当前拓扑</strong><small>本地拓扑库</small></span>${icon('ChevronDown', 14)}</button>
+    <div class="nav-label">工作空间</div><button class="nav-item" data-action="library" aria-label="拓扑库" title="拓扑库">${icon('Layers')}<span>拓扑库</span><span class="nav-shortcut" id="library-count">1</span></button>
     <nav>
-      <button class="nav-item active" data-action="monitor">${icon('LayoutDashboard')}<span>拓扑查看</span><span class="nav-dot"></span></button>
-      <button class="nav-item" data-action="edit">${icon('Cable')}<span>拓扑编辑</span><span class="nav-shortcut">E</span></button>
-      <button class="nav-item" data-action="alarms">${icon('Bell')}<span>设备状态</span><span class="alarm-count" id="nav-alarms">1</span></button>
+      <button class="nav-item active" data-action="monitor" aria-label="拓扑查看" title="拓扑查看">${icon('LayoutDashboard')}<span>拓扑查看</span><span class="nav-dot"></span></button>
+      <button class="nav-item" data-action="edit" aria-label="拓扑编辑" title="拓扑编辑">${icon('Cable')}<span>拓扑编辑</span><span class="nav-shortcut">E</span></button>
+      <button class="nav-item" data-action="alarms" aria-label="节点状态" title="节点状态">${icon('Bell')}<span>节点状态</span><span class="alarm-count" id="nav-alarms">1</span></button>
     </nav>
     <div class="sidebar-divider"></div>
     <div id="sidebar-content"></div>
-    <div class="sidebar-bottom"><span class="sidebar-live"><i></i> 本地演示环境</span><button class="nav-item" data-action="help">${icon('HelpCircle')}<span>使用指南</span>${icon('ArrowUpRight', 14)}</button><div class="profile"><span class="avatar">站</span><span><strong>工作台管理员</strong><small>本地拓扑库 · 无需登录</small></span></div></div>
+    <div class="sidebar-bottom"><button class="nav-item" data-action="help" title="使用指南">${icon('HelpCircle')}<span>使用指南</span>${icon('ArrowUpRight', 14)}</button></div>
   </aside>
+  <div id="sidebar-resizer" class="panel-resizer sidebar-resizer" role="separator" tabindex="0" aria-label="调整节点库宽度" aria-orientation="vertical" aria-controls="sidebar" aria-valuemin="180" aria-valuemax="320" aria-valuenow="208" title="拖动调宽；方向键微调；双击恢复默认"></div>
+  <button id="sidebar-backdrop" class="sidebar-backdrop" aria-label="关闭节点库" hidden></button>
   <div class="workspace">
-    <header class="topbar"><div class="breadcrumb"><span>工作空间</span>${icon('ChevronRight', 14)}<span id="crumb-document">北京地面站</span>${icon('ChevronRight', 14)}<strong id="crumb-mode">拓扑总览</strong></div><div class="topbar-right"><span class="prototype-badge">TOPOLOGY EDITOR</span>${button('help', '使用指南', 'HelpCircle')}${button('alarms', '查看告警', 'Bell')}<span class="topbar-avatar">站</span></div></header>
+    <header class="topbar"><div class="topbar-navigation"><button class="icon-button" data-action="toggle-sidebar" aria-controls="sidebar" aria-expanded="true" title="收起节点库" aria-label="收起节点库">${icon('PanelLeft')}</button><div class="breadcrumb"><span>工作空间</span>${icon('ChevronRight', 14)}<span id="crumb-document">当前拓扑</span>${icon('ChevronRight', 14)}<strong id="crumb-mode">拓扑查看</strong></div></div><div class="topbar-right">${button('help', '使用指南', 'HelpCircle')}${button('alarms', '查看节点状态', 'Bell')}</div></header>
     <main>
       <div class="page-heading"><div><h1 id="page-title">拓扑工作台</h1><p id="page-description">制作、管理和复用拓扑文件</p></div><div class="heading-actions"><button class="button" data-action="library">${icon('Layers', 15)}拓扑库</button><div class="mode-switch" role="group" aria-label="界面模式"><button data-action="monitor" class="active">${icon('Activity', 16)}查看</button><button data-action="edit">${icon('PencilRuler', 16)}编辑</button></div><button class="button primary" data-action="save">${icon('Save', 16)}<span>保存布局</span></button></div></div>
       <section class="topology-panel" aria-label="拓扑画布">
-        <div class="panel-heading"><div class="panel-title"><span class="panel-symbol">${icon('Network', 18)}</span><h2>拓扑画布</h2><span class="tag">主站</span></div><div class="workspace-summary" aria-label="拓扑计数"><span><strong id="stat-total">0</strong> 节点</span><span><strong id="stat-links">0</strong> 链路</span><button data-action="alarms" id="summary-status" title="查看设备状态"><i></i><strong id="stat-alarms">0</strong> 异常</button></div><div class="panel-heading-actions"><span id="save-status" class="save-status">${icon('Check', 13)}示例布局</span>${button('import', '导入 JSON', 'Upload')}${button('export-options', '导出拓扑', 'Download')}${button('viewer', '在独立展示页打开', 'ExternalLink')}${button('draft-history', '草稿与历史', 'Clock3')}${button('fullscreen', '全屏查看', 'Maximize')}</div></div>
+        <div class="panel-heading"><div class="panel-title"><span class="panel-symbol">${icon('Network', 18)}</span><h2>拓扑画布</h2><span class="tag">通用拓扑</span></div><div class="workspace-summary" aria-label="拓扑计数"><span><strong id="stat-total">0</strong> 节点</span><span><strong id="stat-links">0</strong> 链路</span><button data-action="alarms" id="summary-status" title="查看节点状态"><i></i><strong id="stat-alarms">0</strong> 异常</button></div><div class="panel-heading-actions"><span id="save-status" class="save-status">${icon('Check', 13)}示例布局</span>${button('import', '导入 JSON', 'Upload')}${button('export-options', '导出拓扑', 'Download')}${button('viewer', '在独立展示页打开', 'ExternalLink')}${button('draft-history', '草稿与历史', 'Clock3')}${button('fullscreen', '全屏查看', 'Maximize')}</div></div>
         <div id="draft-notice" class="draft-notice" hidden><span id="draft-message" role="status"></span><button class="button" data-action="retry-draft">重试保存草稿</button><button class="button" data-action="export-current-backup">导出当前图</button><button class="button" data-action="storage-reload">重新读取</button></div>
         <div class="canvas-toolbar"><div class="link-filters" aria-label="链路筛选">${(Object.entries(linkTypes) as [LinkKind, typeof linkTypes[LinkKind]][]).map(([kind, def]) => `<button data-filter="${kind}" class="filter-chip active" aria-pressed="true"><span style="--link-color:${def.color}"></span>${def.label}</button>`).join('')}</div><div class="toolbar-right"><span class="live-label" id="live-label"><i></i>模拟实时</span><span class="toolbar-separator"></span><select id="data-mode" aria-label="数据模式"><option value="simulation">模拟数据</option><option value="external">宿主数据</option></select>${button('pause', '暂停模拟数据', 'Pause')}${button('outage', '模拟节点离线', 'Unplug', '离线演示', 'subtle')}</div></div>
         <div class="selection-toolbar" id="edit-tools" hidden><div class="canvas-tool-switch" role="group" aria-label="画布工具">${button('tool-select', '拖动空白处框选节点', 'MousePointer2', '框选')}${button('tool-pan', '拖动空白处平移画布，Shift 拖动可框选', 'Hand', '平移')}</div><span class="toolbar-separator"></span>${button('undo', '撤销 Ctrl / ⌘ Z', 'Undo2')}${button('redo', '重做 Ctrl / ⌘ Shift Z', 'Redo2')}<span class="toolbar-separator"></span>${button('select-all', '全选节点 Ctrl / ⌘ A', 'Scan')}${button('copy', '复制节点及内部连线 Ctrl / ⌘ C', 'Copy')}${button('paste', '粘贴 Ctrl / ⌘ V', 'ClipboardPaste')}${button('duplicate', '复制副本 Ctrl / ⌘ D', 'CopyPlus')}${button('delete', '删除选中对象 Delete', 'Trash2')}<span class="toolbar-separator"></span><select id="align-command" aria-label="节点对齐" title="以首个锁定节点为参照；无锁定节点时以选区边界为参照"><option value="">对齐</option>${Object.entries(alignmentLabels).map(([key, label]) => `<option value="${key}">${label}</option>`).join('')}</select><select id="distribute-command" aria-label="节点分布" title="分布只处理未锁定节点"><option value="">分布</option><option value="horizontal">水平等距</option><option value="vertical">垂直等距</option><option value="gap">指定间距…</option></select>${button('lock-selected', '锁定位置，移动和批量删除会跳过', 'LockKeyhole')}${button('unlock-selected', '解锁所选节点', 'LockKeyholeOpen')}<span id="selection-count">未选择</span><span class="selection-hint">Ctrl / ⌘ / Shift 点选 · 方向键移动</span></div>
-        <div class="canvas-layout"><div class="canvas-wrap" id="canvas-wrap"><div class="canvas-watermark">BEIJING GROUND STATION <span>站内设备连接示意</span></div><div id="graph" tabindex="0" aria-label="设备拓扑画布"></div><div class="canvas-empty" id="canvas-empty" hidden>${icon('Network', 32)}<strong>从第一台设备开始</strong><p>点击左侧设备，或将设备拖入画布。</p></div><div class="canvas-mode" id="canvas-mode">${icon('LockKeyhole', 13)}首页展示 · 布局已锁定</div><div class="canvas-controls">${button('zoom-out', '缩小', 'Minus')}<span id="zoom-label">100%</span>${button('zoom-in', '放大', 'Plus')}<span class="toolbar-separator"></span>${button('fit', '适应画布', 'Scan')}</div></div><aside id="inspector" class="inspector" aria-label="设备详情"></aside></div>
-        <div class="panel-footer"><span><span class="tiny-dot" id="footer-dot"></span><span id="footer-mode">监控模式</span><span class="footer-divider">/</span><span id="footer-hint">点击设备查看参数 · 滚轮缩放 · 拖动画布平移</span></span><span id="update-time">数据更新 --:--:--</span></div>
+        <div class="canvas-layout"><div class="canvas-wrap" id="canvas-wrap"><div class="canvas-watermark">当前拓扑</div><div id="graph" tabindex="0" aria-label="拓扑画布"></div><div class="canvas-empty" id="canvas-empty" hidden>${icon('Network', 32)}<strong>添加第一个节点</strong><p>展开节点库，点击模板或将其拖入画布。</p></div><div class="canvas-mode" id="canvas-mode">${icon('LockKeyhole', 13)}查看模式 · 布局已锁定</div><div class="canvas-controls">${button('zoom-out', '缩小', 'Minus')}<span id="zoom-label">100%</span>${button('zoom-in', '放大', 'Plus')}<span class="toolbar-separator"></span>${button('fit', '适应画布', 'Scan')}</div></div><div id="inspector-resizer" class="panel-resizer inspector-resizer" role="separator" tabindex="0" aria-label="调整属性栏宽度" aria-orientation="vertical" aria-controls="inspector" aria-valuemin="240" aria-valuemax="420" aria-valuenow="280" title="拖动调宽；方向键微调；双击恢复默认"></div><aside id="inspector" class="inspector" aria-label="节点与链路属性"></aside><button class="inspector-toggle icon-button" data-action="toggle-inspector" aria-controls="inspector" aria-expanded="true" title="收起属性栏" aria-label="收起属性栏">${icon('PanelRight')}</button></div>
+        <div class="panel-footer"><span><span class="tiny-dot" id="footer-dot"></span><span id="footer-mode">查看模式</span><span class="footer-divider">/</span><span id="footer-hint">点击节点查看参数 · 滚轮缩放 · 拖动画布平移</span></span><span id="update-time">数据更新 --:--:--</span></div>
       </section>
       <div class="bottom-note"><span id="data-source-note">${icon('Info', 14)}当前为模拟数据。拓扑库保存在本机浏览器，可导出通用文件用于独立展示。</span><span>POWERED BY <strong>AntV X6</strong></span></div>
     </main>
@@ -149,6 +156,10 @@ graph.use(new EditorSelection({
   pointerEvents: 'auto', movable: false, eventTypes: ['leftMouseDown'],
 }));
 installCableTexture(graph, 'station-cable-braid');
+const workbench = new WorkbenchLayout(() => toast('界面偏好无法保存，本次调整仍有效；拓扑存档不受影响', true));
+$('#inspector').addEventListener('toggle', (event) => {
+  if (event.target instanceof HTMLDetailsElement && $('#inspector').contains(event.target)) workbench.rememberSection(event.target);
+}, true);
 const renderedCableStyles = new WeakMap<Edge, string>();
 
 function renderCable(edge: Edge) {
@@ -283,7 +294,7 @@ function applyHighlight() {
 }
 
 function renderSidebar() {
-  $('#sidebar-content').innerHTML = mode === 'edit' ? `<div class="nav-label">节点模板 <span>点击 / 拖入</span></div><div class="device-library">${Object.entries(devices).map(([kind, def]) => `<button class="library-item" draggable="true" data-device="${esc(kind)}"><span>${icon(def.icon, 19)}</span><span>${esc(def.label)}<small>${esc(def.en)}</small></span>${icon('Plus', 13)}</button>`).join('')}</div><button class="button template-add" data-action="new-template">${icon('Plus', 14)}新建节点模板</button><div class="library-help">连接点可供多条线缆共用。<br>相同类型的连接点可以连接。</div>` : `<div class="nav-label">当前拓扑</div><div class="site-info"><span class="site-info-icon">${icon('Network', 28)}</span><strong>${esc(activeDocument.name)}</strong><p>${esc(categoryLabel(activeDocument.category))}</p><div><span>文件格式</span><b>Topology v2</b></div><div><span>节点模板</span><b>${activeDocument.templates.length} 个</b></div><div><span>数据来源</span><b class="mock-source">${dataModeLabel()}</b></div></div><div class="sidebar-tip"><span>从连接，到洞察。</span><p>${esc(activeDocument.description || '制作、管理和复用你的拓扑。')}</p><button data-action="document-info">拓扑信息 ${icon('ArrowUpRight', 14)}</button></div>`;
+  $('#sidebar-content').innerHTML = mode === 'edit' ? `<div class="nav-label">节点模板 <span>点击 / 拖入</span></div><div class="device-library">${Object.entries(devices).map(([kind, def]) => `<button class="library-item" draggable="true" data-device="${esc(kind)}" title="添加${esc(def.label)}" aria-label="添加${esc(def.label)}"><span>${icon(def.icon, 19)}</span><span>${esc(def.label)}<small>${esc(def.en)}</small></span>${icon('Plus', 13)}</button>`).join('')}</div><button class="button template-add" data-action="new-template" aria-label="新建节点模板" title="新建节点模板">${icon('Plus', 14)}<span>新建节点模板</span></button><div class="library-help">连接点可供多条线缆共用。<br>相同类型的连接点可以连接。</div>` : `<div class="nav-label">当前拓扑</div><div class="site-info"><span class="site-info-icon">${icon('Network', 28)}</span><strong>${esc(activeDocument.name)}</strong><p>${esc(categoryLabel(activeDocument.category))}</p><div><span>文件格式</span><b>Topology v2</b></div><div><span>节点模板</span><b>${activeDocument.templates.length} 个</b></div><div><span>数据来源</span><b class="mock-source">${dataModeLabel()}</b></div></div><div class="sidebar-tip"><span>拓扑说明</span><p>${esc(activeDocument.description || '制作、管理和复用你的拓扑。')}</p><button data-action="document-info">拓扑信息 ${icon('ArrowUpRight', 14)}</button></div>`;
 }
 
 function setMode(next: Mode) {
@@ -300,10 +311,10 @@ function setMode(next: Mode) {
   $('#crumb-mode').textContent = mode === 'edit' ? '拓扑编辑' : '拓扑查看';
   $('#page-title').textContent = activeDocument.name;
   $('#page-description').textContent = mode === 'edit' ? '编辑拓扑' : '查看拓扑';
-  $('#canvas-mode').innerHTML = `${icon(mode === 'edit' ? 'PencilRuler' : 'LockKeyhole', 13)}${mode === 'edit' ? '编辑模式 · 10 px 网格吸附' : '首页展示 · 布局已锁定'}`;
+  $('#canvas-mode').innerHTML = `${icon(mode === 'edit' ? 'PencilRuler' : 'LockKeyhole', 13)}${mode === 'edit' ? '编辑模式 · 10 px 网格吸附' : '查看模式 · 布局已锁定'}`;
   $('#edit-tools').hidden = mode !== 'edit';
-  $('#footer-mode').textContent = mode === 'edit' ? '编辑模式' : '监控模式';
-  $('#footer-hint').textContent = mode === 'edit' ? '拖动设备布局 · 从端口连线 · 选中连线调整拐点' : '点击设备查看参数 · 滚轮缩放 · 拖动画布平移';
+  $('#footer-mode').textContent = mode === 'edit' ? '编辑模式' : '查看模式';
+  $('#footer-hint').textContent = mode === 'edit' ? '拖动节点布局 · 从端口连线 · 选中连线调整拐点' : '点击节点查看参数 · 滚轮缩放 · 拖动画布平移';
   graph.getEdges().forEach((e) => e.removeTools());
   renderSidebar(); syncDataControls(); refreshSelection(); updateDocumentChrome();
 }
@@ -332,7 +343,7 @@ function syncDataControls() {
   $<HTMLButtonElement>('[data-action="outage"]').disabled = external;
   $('#live-label').innerHTML = `<i></i>${external ? values.size ? '宿主数据' : '等待宿主数据' : paused ? '模拟已暂停' : '模拟实时'}`;
   $('#live-label').classList.toggle('paused', !external && paused);
-  $('#data-source-note').innerHTML = `${icon('Info', 14)}${external ? '当前使用宿主数据，模拟器已停止。尚未收到数据的设备显示“等待数据”。' : '当前为模拟数据。拓扑库保存在本机浏览器，可导出通用文件用于独立展示。'}`;
+  $('#data-source-note').innerHTML = `${icon('Info', 14)}${external ? '当前使用宿主数据，模拟器已停止。尚未收到数据的节点显示“等待数据”。' : '当前为模拟数据。拓扑库保存在本机浏览器，可导出通用文件用于独立展示。'}`;
 }
 
 function setDataMode(next: EditorDataMode) {
@@ -391,7 +402,20 @@ function renderDevicePorts(node: Node) {
   const ports = devicePorts(data);
   const used = connectedPortIds(node);
   const row = (port: typeof ports[number]) => `<div><i style="background:${linkTypes[port.kind].color}"></i><strong title="${esc(port.id)}">${esc(port.label)}</strong><span>${portSides[port.side]} · ${used.has(port.id) ? '已连接' : '空闲'}</span></div>`;
-  return `<div class="detail-section"><h4>连接端口 <span>${ports.length} 个 / 已连接 ${used.size}</span></h4>${mode === 'edit' ? `<button class="button full-width port-config-button" data-action="configure-ports">${icon('Settings', 14)}配置端口 / 批量新增</button>` : ''}<div class="port-side-summary">${Object.entries(portSides).map(([key, label]) => `${label} ${ports.filter((p) => p.side === key).length}`).join(' · ')}</div><div class="port-list">${ports.slice(0, 6).map(row).join('') || '<p class="muted">暂无端口</p>'}</div>${ports.length > 6 ? `<details class="port-more"><summary>展开其余 ${ports.length - 6} 个端口</summary><div class="port-list">${ports.slice(6).map(row).join('')}</div></details>` : ''}</div>`;
+  const content = `${mode === 'edit' ? `<button class="button full-width port-config-button" data-action="configure-ports">${icon('Settings', 14)}配置端口 / 批量新增</button>` : ''}<div class="port-side-summary">${Object.entries(portSides).map(([key, label]) => `${label} ${ports.filter((p) => p.side === key).length}`).join(' · ')}</div><div class="port-list">${ports.slice(0, 6).map(row).join('') || '<p class="muted">暂无端口</p>'}</div>${ports.length > 6 ? `<details class="port-more"><summary>展开其余 ${ports.length - 6} 个端口</summary><div class="port-list">${ports.slice(6).map(row).join('')}</div></details>` : ''}`;
+  const title = `连接端口 <span>${ports.length} 个 / 已连接 ${used.size}</span>`;
+  return mode === 'edit' ? propertySection('ports', title, content) : `<div class="detail-section"><h4>${title}</h4>${content}</div>`;
+}
+
+function propertySection(key: string, title: string, content: string, open = true, className = '') {
+  return `<details class="property-section ${className}" data-property-section="${key}" ${workbench.sectionOpen(key, open) ? 'open' : ''}><summary>${title}</summary><div class="property-content">${content}</div></details>`;
+}
+
+function renderNodeEditor(node: Node, data: DeviceData) {
+  return propertySection('basic', '基本信息', `<label class="field">节点名称<input id="device-title" maxlength="60" value="${esc(data.title)}" /></label><label class="field">业务对象 ID<input id="device-id" maxlength="80" value="${esc(data.deviceId)}" /></label><label class="field">管理地址<input id="device-address" maxlength="100" value="${esc(data.address)}" /></label><label class="field">模拟状态<select id="device-status">${Object.entries(statusLabels).map(([key, label]) => `<option value="${key}" ${key === data.status ? 'selected' : ''}>${label}</option>`).join('')}</select></label>`)
+    + propertySection('metrics', '卡片展示参数 <span>最多 2 项</span>', `<div class="metric-options" id="visible-metrics" tabindex="-1">${metricOptions(data, devices[data.kind])}</div><p class="field-hint">可不选参数，卡片会自动收紧高度。</p>`)
+    + renderDevicePorts(node) + renderBindingControls(data)
+    + `<div class="inspector-apply"><button class="button primary full-width" data-action="apply-device">${icon('Check', 15)}应用修改</button></div>`;
 }
 
 function renderInspector() {
@@ -405,7 +429,7 @@ function renderInspector() {
     return;
   }
   if (!selected) {
-    panel.innerHTML = `<div class="inspector-header"><span>属性</span><span class="small-kicker">未选择</span></div><div class="inspector-empty">${icon('MousePointer2', 22)}<strong>选择节点或连线</strong><p>${mode === 'edit' ? '查看并编辑属性。按住 Ctrl、⌘ 或 Shift 点选多个节点，也可以使用框选工具。' : '查看设备参数、状态和连接关系。切换到编辑模式可以修改拓扑。'}</p><div class="empty-shortcuts"><span>Ctrl / ⌘ S <b>手动保存</b></span><span>Ctrl / ⌘ Z <b>撤销</b></span>${mode === 'edit' ? '<span>Ctrl / ⌘ C / V <b>复制 / 粘贴</b></span><span>Delete <b>删除选中</b></span>' : ''}</div></div>`;
+    panel.innerHTML = `<div class="inspector-header"><span>属性</span><span class="small-kicker">未选择</span></div><div class="inspector-empty">${icon('MousePointer2', 22)}<strong>选择节点或连线</strong><p>${mode === 'edit' ? '查看并编辑属性。按住 Ctrl、⌘ 或 Shift 点选多个节点，也可以使用框选工具。' : '查看节点参数、状态和连接关系。切换到编辑模式可以修改拓扑。'}</p><div class="empty-shortcuts"><span>Ctrl / ⌘ S <b>手动保存</b></span><span>Ctrl / ⌘ Z <b>撤销</b></span>${mode === 'edit' ? '<span>Ctrl / ⌘ C / V <b>复制 / 粘贴</b></span><span>Delete <b>删除选中</b></span>' : ''}</div></div>`;
     return;
   }
   if (selected.isEdge()) {
@@ -425,7 +449,7 @@ function renderInspector() {
         ${renderCableSettings(edge, kind)}
         ${mode === 'edit' ? `<button class="button full-width" data-action="apply-edge">${icon('Check', 15)}应用修改</button>` : ''}
       </div>
-      ${mode === 'edit' ? `<div class="inspector-callout">${icon('Move', 17)}<p>拖动绿色圆点调整拐点，拖动线段中间的手柄改变走线。点击线条添加拐点，双击拐点删除。首页展示会隐藏端口与编辑手柄。</p></div><button class="button danger inspector-bottom-button" data-action="delete">${icon('Trash2', 15)}删除这条连线</button>` : `<div class="inspector-callout">${icon('Info', 17)}<p>线缆保留编辑时设置的样式。真实链路状态需要接入后端采集数据。</p></div>`}
+      ${mode === 'edit' ? `<div class="inspector-callout">${icon('Move', 17)}<p>拖动绿色圆点调整拐点，拖动线段中间的手柄改变走线。点击线条添加拐点，双击拐点删除。查看模式会隐藏端口与编辑手柄。</p></div><button class="button danger inspector-bottom-button" data-action="delete">${icon('Trash2', 15)}删除这条连线</button>` : `<div class="inspector-callout">${icon('Info', 17)}<p>线缆保留编辑时设置的样式。真实链路状态需要接入后端采集数据。</p></div>`}
     `;
     return;
   }
@@ -434,7 +458,7 @@ function renderInspector() {
   const def = devices[data.kind];
   const status = runtimeStatus(node);
   const connected = graph.getConnectedEdges(node) || [];
-  panel.innerHTML = `<div class="inspector-header"><span>${mode === 'edit' ? '设备属性' : '设备详情'}</span>${button('deselect', '关闭详情', 'X')}</div><div class="detail-identity"><span class="detail-device-icon kind-${data.kind}">${icon(def.icon, 28)}</span><h3>${esc(data.title)}</h3><span class="type-caption">${esc(def.model)}</span><span class="status-pill ${status}" id="detail-status"><i></i>${esc(runtimeLabel(node))}</span></div>${mode === 'edit' ? `<div class="node-lock-status">${icon(data.locked ? 'LockKeyhole' : 'Move', 14)}<span>${data.locked ? '位置已锁定' : '位置可编辑'}</span><button data-action="toggle-node-lock">${data.locked ? '解锁' : '锁定'}</button></div>` : ''}${mode === 'edit' ? `<div class="detail-section"><h4>基本信息</h4><label class="field">设备名称<input id="device-title" maxlength="60" value="${esc(data.title)}" /></label><label class="field">绑定设备 ID<input id="device-id" maxlength="80" value="${esc(data.deviceId)}" /></label><label class="field">管理地址<input id="device-address" maxlength="100" value="${esc(data.address)}" /></label><label class="field">演示状态<select id="device-status">${Object.entries(statusLabels).map(([key, label]) => `<option value="${key}" ${key === data.status ? 'selected' : ''}>${label}</option>`).join('')}</select></label><h4 class="metrics-heading">卡片展示参数 <span>最多 2 项</span></h4><div class="metric-options">${metricOptions(data, def)}</div>${renderBindingControls(data)}<button class="button primary full-width" data-action="apply-device">${icon('Check', 15)}应用修改</button></div>${renderDevicePorts(node)}<button class="button danger inspector-bottom-button" data-action="delete">${icon('Trash2', 15)}删除设备及连线</button>` : `${metricDetails(def, (key) => status === 'offline' ? '—' : metricValue(node, key), dataModeLabel())}${renderDevicePorts(node)}<div class="detail-section"><h4>设备信息</h4><div class="detail-info"><div><span>设备 ID</span><strong>${esc(data.deviceId)}</strong></div><div><span>管理地址</span><strong>${esc(data.address || '未配置')}</strong></div><div><span>关联链路</span><strong>${connected.length} 条</strong></div></div></div><div class="detail-section"><h4>连接关系</h4><div class="connection-list">${connected.map((edge) => { const other = graph.getCellById(edge.getSourceCellId() === node.id ? edge.getTargetCellId() : edge.getSourceCellId()); return `<button data-select-cell="${esc(edge.id)}"><span style="background:${linkTypes[(edge.getData()?.kind || 'ethernet') as LinkKind].color}"></span>${esc(other?.getData<DeviceData>()?.title || '未连接')}${icon('ChevronRight', 13)}</button>`; }).join('') || '<p class="muted">暂无连接</p>'}</div></div>`}`;
+  panel.innerHTML = `<div class="inspector-header"><span>${mode === 'edit' ? '节点属性' : '节点详情'}</span>${button('deselect', '关闭详情', 'X')}</div><div class="detail-identity"><span class="detail-device-icon kind-${data.kind}">${icon(def.icon, 28)}</span><h3>${esc(data.title)}</h3><span class="type-caption">${esc(def.model)}</span><span class="status-pill ${status}" id="detail-status"><i></i>${esc(runtimeLabel(node))}</span></div>${mode === 'edit' ? `<div class="node-lock-status">${icon(data.locked ? 'LockKeyhole' : 'Move', 14)}<span>${data.locked ? '位置已锁定' : '位置可编辑'}</span><button data-action="toggle-node-lock">${data.locked ? '解锁' : '锁定'}</button></div>` : ''}${mode === 'edit' ? `${renderNodeEditor(node, data)}<button class="button danger inspector-bottom-button" data-action="delete">${icon('Trash2', 15)}删除节点及连线</button>` : `${metricDetails(def, (key) => status === 'offline' ? '—' : metricValue(node, key), dataModeLabel())}${renderDevicePorts(node)}<div class="detail-section"><h4>节点信息</h4><div class="detail-info"><div><span>业务对象 ID</span><strong>${esc(data.deviceId)}</strong></div><div><span>管理地址</span><strong>${esc(data.address || '未配置')}</strong></div><div><span>关联链路</span><strong>${connected.length} 条</strong></div></div></div><div class="detail-section"><h4>连接关系</h4><div class="connection-list">${connected.map((edge) => { const other = graph.getCellById(edge.getSourceCellId() === node.id ? edge.getTargetCellId() : edge.getSourceCellId()); return `<button data-select-cell="${esc(edge.id)}"><span style="background:${linkTypes[(edge.getData()?.kind || 'ethernet') as LinkKind].color}"></span>${esc(other?.getData<DeviceData>()?.title || '未连接')}${icon('ChevronRight', 13)}</button>`; }).join('') || '<p class="muted">暂无连接</p>'}</div></div>`}`;
   updateTrend();
 }
 
@@ -446,7 +470,7 @@ function updateCounts() {
   $('#stat-alarms').textContent = String(alarms);
   $('#stat-links').textContent = String(graph.getEdges().length);
   $('#nav-alarms').textContent = String(alarms);
-  $('#summary-status').title = `${nodes.length - offline} 台在线，${alarms} 台离线、等待或告警；点击查看状态`;
+  $('#summary-status').title = `${nodes.length - offline} 个在线，${alarms} 个离线、等待或告警；点击查看状态`;
   $('#summary-status').classList.toggle('has-alarms', alarms > 0);
 }
 
@@ -514,7 +538,7 @@ $<HTMLDialogElement>('#modal').addEventListener('close', () => {
 });
 function showAlarms() {
   const alarms = graph.getNodes().filter((n) => runtimeStatus(n) !== 'normal');
-  showModal('当前告警', `<p class="modal-description">${telemetry.mode === 'simulation' ? '以下状态由模拟器生成，用于验证告警展示。' : '以下状态来自宿主数据，未接收数据的设备显示等待状态。'}</p>${alarms.map((n) => `<button class="alarm-row" data-focus-device="${esc(n.id)}"><span class="status-pill ${runtimeStatus(n)}">${icon(runtimeStatus(n) === 'offline' ? 'Unplug' : 'CircleAlert', 17)}</span><span><strong>${esc(n.getData<DeviceData>().title)}</strong><small>${esc(runtimeLabel(n))}</small></span>${icon('ArrowUpRight', 16)}</button>`).join('') || '<div class="empty-alarms">' + icon('CircleCheck', 36) + '<p>所有设备运行正常</p></div>'}`);
+  showModal('当前告警', `<p class="modal-description">${telemetry.mode === 'simulation' ? '以下状态由模拟器生成，用于验证告警展示。' : '以下状态来自宿主数据，未接收数据的节点显示等待状态。'}</p>${alarms.map((n) => `<button class="alarm-row" data-focus-device="${esc(n.id)}"><span class="status-pill ${runtimeStatus(n)}">${icon(runtimeStatus(n) === 'offline' ? 'Unplug' : 'CircleAlert', 17)}</span><span><strong>${esc(n.getData<DeviceData>().title)}</strong><small>${esc(runtimeLabel(n))}</small></span>${icon('ArrowUpRight', 16)}</button>`).join('') || '<div class="empty-alarms">' + icon('CircleCheck', 36) + '<p>所有节点运行正常</p></div>'}`);
 }
 function addFromLibrary(kind: DeviceKind, point?: { x: number; y: number }) {
   if (mode !== 'edit') return;
@@ -526,7 +550,6 @@ function addFromLibrary(kind: DeviceKind, point?: { x: number; y: number }) {
   selectCell(node); updateRuntime(); flushHistory(); toast(`已添加${devices[kind].label}，可拖动调整位置`);
 }
 
-function categoryLabel(category: string) { return categories[category as keyof typeof categories] || category; }
 function captureDocument(): TopologyDocument {
   return { ...activeDocument, updatedAt: new Date().toISOString(), templates: templatesFromDefinitions(devices), topology: snapshot() };
 }
@@ -609,12 +632,25 @@ function documentsForLibrary() {
   return library.documents.map((saved) => {
     const recovery = workspace?.document(saved.id);
     const document = saved.id === activeDocument.id ? captureDocument() : recovery?.draft && !recovery.stale ? recovery.draft.document : saved;
-    return { ...document, hasDraft: !!recovery?.draft || documentSignature(document) !== documentSignature(saved) };
+    return { ...document, updatedAt: saved.id === activeDocument.id ? activeDocument.updatedAt : document.updatedAt, hasDraft: !!recovery?.draft || documentSignature(document) !== documentSignature(saved) };
   });
 }
+let libraryQuery = '', libraryCategory = '', librarySort: LibrarySort = 'modified';
 function showLibrary() {
-  showModal('拓扑库', `<div class="library-dialog-heading"><p>独立保存每张图的节点、模板、数据绑定和手动走线。切换时自动保存草稿。</p><button class="button primary" data-action="new-document">${icon('Plus', 15)}新建拓扑</button></div><div class="document-grid">${documentsForLibrary().map((d) => `<article class="document-card ${d.id === activeDocument.id ? 'current' : ''}"><div class="document-card-top">${icon(d.category === 'satellite' ? 'Layers' : d.category === 'datacenter' ? 'Server' : 'Network', 25)}<span>${esc(categoryLabel(d.category))}</span>${d.id === activeDocument.id ? '<b>当前</b>' : ''}${d.hasDraft ? '<b>含草稿</b>' : ''}</div><h3>${esc(d.name)}</h3><p>${esc(d.description || '暂无说明')}</p><div class="document-card-meta">${d.topology.nodes.length} 个节点 · ${d.topology.edges.length} 条连接<span>${new Date(d.updatedAt).toLocaleDateString('zh-CN')}</span></div><div class="document-card-actions">${['open', 'viewer', 'rename', 'copy', 'delete'].map((action, i) => `<button type="button" data-document-action="${action}" data-document-id="${esc(d.id)}" ${action === 'delete' && library.documents.length === 1 ? 'disabled title="至少保留一张图"' : ''}>${['打开', '独立预览', '信息', '复制', '删除'][i]}</button>`).join('')}</div></article>`).join('')}</div>`);
+  finishGroupDrag(); flushHistory(); saveDraftNow();
+  const categoryOptions = [...new Set(documentsForLibrary().map((doc) => doc.category))].sort((a, b) => categoryLabel(a).localeCompare(categoryLabel(b), 'zh-CN'));
+  if (!categoryOptions.includes(libraryCategory)) libraryCategory = '';
+  showModal('拓扑库', `<div class="library-dialog-heading"><p>管理拓扑与草稿，按布局缩略图快速辨认。</p><button class="button primary" data-action="new-document">${icon('Plus', 15)}新建拓扑</button></div><div class="library-filters"><label class="library-search">${icon('Search', 16)}<input id="library-search" type="search" aria-label="搜索拓扑" placeholder="搜索名称、说明或分类" value="${esc(libraryQuery)}" /></label><label class="field">分类<select id="library-category"><option value="">全部分类</option>${categoryOptions.map((category) => `<option value="${esc(category)}" ${category === libraryCategory ? 'selected' : ''}>${esc(categoryLabel(category))}</option>`).join('')}</select></label><label class="field">排序<select id="library-sort"><option value="modified" ${librarySort === 'modified' ? 'selected' : ''}>最近修改</option><option value="name" ${librarySort === 'name' ? 'selected' : ''}>名称</option></select></label></div><div class="library-result-summary"><span id="library-result-count" role="status" aria-live="polite"></span><button class="text-button" data-action="clear-library-filters">清除筛选</button></div><div class="document-grid" id="library-results"></div>`);
   $('#modal').classList.add('library-modal');
+  $('#library-search').addEventListener('input', (event) => { libraryQuery = (event.target as HTMLInputElement).value; renderLibraryResults(); });
+  $('#library-category').addEventListener('change', (event) => { libraryCategory = (event.target as HTMLSelectElement).value; renderLibraryResults(); });
+  $('#library-sort').addEventListener('change', (event) => { librarySort = (event.target as HTMLSelectElement).value as LibrarySort; renderLibraryResults(); });
+  renderLibraryResults();
+}
+function renderLibraryResults() {
+  const documents = documentsForLibrary(), results = findDocuments(documents, libraryQuery, libraryCategory, librarySort);
+  $('#library-result-count').textContent = `显示 ${results.length} / ${documents.length} 张拓扑`;
+  $('#library-results').innerHTML = results.map((d) => `<article class="document-card ${d.id === activeDocument.id ? 'current' : ''}" data-library-document="${esc(d.id)}"><button class="document-preview" data-preview-document="${esc(d.id)}" aria-label="打开${esc(d.name)}">${documentThumbnail(d)}</button><div class="document-card-top"><span>${esc(categoryLabel(d.category))}</span>${d.id === activeDocument.id ? '<b>当前</b>' : ''}${d.hasDraft ? '<b>含草稿</b>' : ''}</div><h3 title="${esc(d.name)}">${esc(d.name)}</h3><p>${esc(d.description || '暂无说明')}</p><div class="document-card-meta">${d.topology.nodes.length} 个节点 · ${d.topology.edges.length} 条连接<time datetime="${esc(d.updatedAt)}" title="${esc(new Date(d.updatedAt).toLocaleString('zh-CN'))}">${new Date(d.updatedAt).toLocaleDateString('zh-CN')}</time></div><div class="document-card-actions">${['open', 'viewer', 'rename', 'copy', 'delete'].map((action, i) => `<button type="button" data-document-action="${action}" data-document-id="${esc(d.id)}" ${action === 'delete' && library.documents.length === 1 ? 'disabled title="至少保留一张图"' : ''}>${['打开', '独立预览', '信息', '复制', '删除'][i]}</button>`).join('')}</div></article>`).join('') || `<div class="library-empty">${icon('Search', 25)}<strong>未找到匹配的拓扑</strong><p>试试其他关键词或分类，也可以清除筛选。</p></div>`;
 }
 function showDocumentInfo(id: string) {
   const doc = documentsForLibrary().find((d) => d.id === id)!;
@@ -672,7 +708,7 @@ function handleDocumentAction(action: string, id: string) {
 }
 function renderBindingControls(data: DeviceData) {
   const binding = data.binding || { source: data.deviceId, fields: Object.fromEntries(devices[data.kind].metrics.map((m) => [m.key, m.key])), statusField: 'status' };
-  return `<details class="binding-fields"><summary>数据绑定 · 用于独立展示</summary><label class="field">业务对象 ID<input id="binding-source" maxlength="100" value="${esc(binding.source)}" /></label><label class="field">参数字段映射（JSON）<textarea id="binding-fields" rows="4">${esc(JSON.stringify(binding.fields, null, 2))}</textarea></label><label class="field">状态字段<input id="binding-status" value="${esc(binding.statusField || '')}" placeholder="例如 status 或 health.state" /></label><label class="field">状态映射（JSON，可留空）<textarea id="binding-status-map" rows="3">${esc(JSON.stringify(binding.statusMap || {}, null, 2))}</textarea></label><p>左侧为模板参数标识，右侧为数据路径。状态支持 normal / warning / offline，也可映射业务状态。</p></details>`;
+  return propertySection('binding', '数据绑定 <span>用于独立展示</span>', `<label class="field">绑定源 ID<input id="binding-source" maxlength="100" value="${esc(binding.source)}" /></label><label class="field">参数字段映射（JSON）<textarea id="binding-fields" rows="4">${esc(JSON.stringify(binding.fields, null, 2))}</textarea></label><label class="field">状态字段<input id="binding-status" value="${esc(binding.statusField || '')}" placeholder="例如 status 或 health.state" /></label><label class="field">状态映射（JSON，可留空）<textarea id="binding-status-map" rows="3">${esc(JSON.stringify(binding.statusMap || {}, null, 2))}</textarea></label><p class="field-hint">左侧为模板参数标识，右侧为数据路径。状态支持 normal / warning / offline，也可映射业务状态。</p>`, false, 'binding-fields');
 }
 
 function executeEditorCommand(document: TopologyDocument, selectIds: string[] = []) {
@@ -703,7 +739,7 @@ function pasteNodes(duplicate = false, at?: { x: number; y: number }) {
     executeEditorCommand(result.document, result.nodeIds);
     if (!duplicate) pasteCount++;
     if (result.nodeIds.length) graph.centerCell(graph.getCellById(result.nodeIds[0]));
-    toast(`已粘贴 ${result.nodeIds.length} 个节点，副本已生成新的设备 ID，请确认数据绑定`);
+    toast(`已粘贴 ${result.nodeIds.length} 个节点，副本已生成新的业务对象 ID，请确认数据绑定`);
   } catch (error) { toast(error instanceof Error ? error.message : '粘贴失败', true); }
 }
 
@@ -883,6 +919,14 @@ async function exportTopology(format: 'json' | 'svg' | 'png' | 'html') {
 }
 
 const actions: Record<string, () => void> = {
+  'toggle-sidebar': () => workbench.toggle('sidebar'),
+  'close-sidebar': () => workbench.closeDrawer(),
+  'toggle-inspector': () => workbench.toggle('inspector'),
+  'clear-library-filters': () => {
+    libraryQuery = libraryCategory = '';
+    $<HTMLInputElement>('#library-search').value = ''; $<HTMLSelectElement>('#library-category').value = '';
+    renderLibraryResults(); $('#library-search').focus();
+  },
   'lock-selected': () => setSelectedLock(true),
   'unlock-selected': () => setSelectedLock(false),
   'toggle-node-lock': () => { if (selected?.isNode()) setSelectedLock(!selected.getData<DeviceData>().locked); },
@@ -915,21 +959,24 @@ const actions: Record<string, () => void> = {
   library: showLibrary,
   viewer: () => openIndependentViewer(activeDocument.id),
   'document-info': () => showDocumentInfo(activeDocument.id),
-  'new-document': () => showModal('新建拓扑', `<label class="field">拓扑名称<input id="new-document-name" maxlength="100" placeholder="例如：运控中心机房" /></label><label class="field">起始内容<select id="new-document-kind">${Object.entries(categories).map(([key, label]) => `<option value="${key}">${label}${key === 'general' ? ' · 空白画布' : ' · 示例'}</option>`).join('')}</select></label><p class="modal-description">每张图独立保存。通用节点模板可用于设备连接、业务逻辑和子系统关系。</p><button class="button primary" data-action="create-document">创建并打开</button>`),
+  'new-document': () => showModal('新建拓扑', `<label class="field">拓扑名称<input id="new-document-name" maxlength="100" placeholder="例如：运控中心机房" /></label><label class="field">起始内容<select id="new-document-kind">${Object.entries(categories).map(([key, label]) => `<option value="${key}">${label}${key === 'general' ? ' · 空白画布' : ' · 示例'}</option>`).join('')}</select></label><p class="modal-description">每张图独立保存。通用节点模板可用于节点连接、业务逻辑和子系统关系。</p><button class="button primary" data-action="create-document">创建并打开</button>`),
   'create-document': () => {
+    clearFieldErrors($('#modal-content'));
     const name = $<HTMLInputElement>('#new-document-name').value.trim();
-    if (!name) { toast('请填写拓扑名称', true); return; }
+    if (!name) { showFieldError('new-document-name', '请填写拓扑名称'); return; }
     const category = $<HTMLSelectElement>('#new-document-kind').value;
     if (!saveDraftNow()) return;
     const doc = sampleDocument(category, name);
     if (commitLibrary({ ...library, activeId: doc.id, documents: [...library.documents, doc] })) { openDocument(doc.id); $<HTMLDialogElement>('#modal').close(); setMode('edit'); }
   },
   'apply-document-info': () => {
+    clearFieldErrors($('#modal-content'));
     const id = $<HTMLInputElement>('#metadata-document-id').value;
     const name = $<HTMLInputElement>('#metadata-name').value.trim();
     const category = $<HTMLInputElement>('#metadata-category').value.trim();
     const description = $<HTMLTextAreaElement>('#metadata-description').value;
-    if (!name || !category) { toast('请填写名称和分类', true); return; }
+    if (!name) { showFieldError('metadata-name', '请填写拓扑名称'); return; }
+    if (!category) { showFieldError('metadata-category', '请填写分类'); return; }
     if (!saveDraftNow()) return;
     if (!workspace) return;
     try {
@@ -947,9 +994,13 @@ const actions: Record<string, () => void> = {
   },
   'new-template': () => showModal('新建节点模板', `<label class="field">模板名称<input id="template-name" maxlength="40" placeholder="例如：电源控制模块" /></label><label class="field">图标<select id="template-icon">${iconNames.map((name) => `<option value="${name}" ${name === 'Cpu' ? 'selected' : ''}>${name}</option>`).join('')}</select></label><label class="field">四边连接点类型<select id="template-link">${Object.entries(linkTypes).map(([key, value]) => `<option value="${key}" ${key === 'logical' ? 'selected' : ''}>${value.label}</option>`).join('')}</select></label><label class="field">参数定义：每行“标识,名称,单位,小数位数”<textarea id="template-metrics" rows="5" placeholder="voltage,电压,V,1&#10;load,负载,%,1"></textarea></label><p class="modal-description">可不填写参数。每个模板最多 20 项参数，节点卡片可选择其中最多 2 项。模板随拓扑文件导出。</p><button class="button primary" data-action="create-template">创建模板</button>`),
   'create-template': () => {
+    clearFieldErrors($('#modal-content'));
+    let field = 'template-name';
     try {
       const name = $<HTMLInputElement>('#template-name').value.trim();
+      if (!name) { showFieldError('template-name', '请填写模板名称'); return; }
       const kind = $<HTMLSelectElement>('#template-link').value as LinkKind;
+      field = 'template-metrics';
       const metrics = $<HTMLTextAreaElement>('#template-metrics').value.split('\n').filter((line) => line.trim()).map((line) => { const [key, label, unit = '', decimals = '1'] = line.split(/[,，]/).map((part) => part.trim()); return { key, label, unit, decimals: Number(decimals) }; });
       const template = parseTemplate({ id: newId('custom'), version: 1, label: name, en: 'CUSTOM', model: name, icon: $<HTMLSelectElement>('#template-icon').value, metrics, ports: Object.entries(portSides).map(([side, label]) => ({ id: side, label, side, kind })) });
       if (!saveDraftNow()) return;
@@ -957,7 +1008,7 @@ const actions: Record<string, () => void> = {
       activeDocument = { ...captureDocument(), templates: [...templatesFromDefinitions(devices), template] };
       installEditorTemplates(activeDocument); flushHistory(); renderSidebar(); updateDocumentChrome();
       $<HTMLDialogElement>('#modal').close(); toast('节点模板已加入当前拓扑，可从左侧拖入');
-    } catch (error) { toast(error instanceof Error ? error.message : '模板配置不合法', true); }
+    } catch (error) { showFieldError(field, error instanceof Error ? error.message : '模板配置不合法'); }
   },
   monitor: () => setMode('monitor'), edit: () => setMode('edit'), deselect: () => selectCell(null),
   fit: fitGraph, 'zoom-in': () => graph.zoom(.1), 'zoom-out': () => graph.zoom(-.1),
@@ -980,18 +1031,34 @@ const actions: Record<string, () => void> = {
   },
   'apply-device': () => {
     if (mode !== 'edit' || !selected?.isNode()) return;
+    clearFieldErrors($('#inspector'));
     const title = $<HTMLInputElement>('#device-title').value.trim();
     const deviceId = $<HTMLInputElement>('#device-id').value.trim();
     const visibleMetrics = [...document.querySelectorAll<HTMLInputElement>('input[name="visible-metric"]:checked')].map((el) => el.value);
-    if (!title || !deviceId) { toast('请填写设备名称和设备 ID', true); return; }
-    if (visibleMetrics.length > 2) { toast('卡片最多展示 2 项参数', true); return; }
+    if (!title) { showFieldError('device-title', '请填写节点名称'); return; }
+    if (!deviceId) { showFieldError('device-id', '请填写业务对象 ID'); return; }
+    if (visibleMetrics.length > 2) { showFieldError('visible-metrics', '卡片最多展示 2 项参数'); return; }
     let binding;
-    try { binding = parseDataBinding({ source: $<HTMLInputElement>('#binding-source').value.trim(), fields: JSON.parse($<HTMLTextAreaElement>('#binding-fields').value), ...($<HTMLInputElement>('#binding-status').value.trim() ? { statusField: $<HTMLInputElement>('#binding-status').value.trim() } : {}), statusMap: JSON.parse($<HTMLTextAreaElement>('#binding-status-map').value || '{}') }, devices[selected.getData<DeviceData>().kind].metrics.map((m) => m.key)); }
-    catch (error) { toast(error instanceof Error ? error.message : '数据绑定不合法', true); return; }
+    let bindingField = 'binding-source';
+    try {
+      const source = $<HTMLInputElement>('#binding-source').value.trim();
+      if (!source) { showFieldError('binding-source', '请填写绑定源 ID'); return; }
+      bindingField = 'binding-fields';
+      const fields = JSON.parse($<HTMLTextAreaElement>('#binding-fields').value);
+      // Validate each portion separately so errors identify the relevant field.
+      parseDataBinding({ source, fields }, devices[selected.getData<DeviceData>().kind].metrics.map((m) => m.key));
+      bindingField = 'binding-status';
+      const statusField = $<HTMLInputElement>('#binding-status').value.trim();
+      parseDataBinding({ source, fields, ...(statusField ? { statusField } : {}) }, devices[selected.getData<DeviceData>().kind].metrics.map((m) => m.key));
+      bindingField = 'binding-status-map';
+      const statusMap = JSON.parse($<HTMLTextAreaElement>('#binding-status-map').value || '{}');
+      binding = parseDataBinding({ source, fields, ...(statusField ? { statusField } : {}), statusMap }, devices[selected.getData<DeviceData>().kind].metrics.map((m) => m.key));
+    }
+    catch (error) { showFieldError(bindingField, error instanceof SyntaxError ? 'JSON 格式不正确，请检查引号、逗号和括号' : error instanceof Error ? error.message : '数据绑定不合法'); return; }
     flushHistory();
     selected.setData({ ...selected.getData<DeviceData>(), title, deviceId, address: $<HTMLInputElement>('#device-address').value.trim(), status: $<HTMLSelectElement>('#device-status').value as DeviceStatus, visibleMetrics, binding }, { overwrite: true });
     updateNodeGeometry(selected);
-    flushHistory(); updateRuntime(); renderInspector(); applyHighlight(); toast('设备属性已更新，记得保存布局');
+    flushHistory(); updateRuntime(); renderInspector(); applyHighlight(); toast('节点属性已应用，草稿将自动保存');
   },
   'configure-ports': () => {
     if (mode !== 'edit' || !selected?.isNode()) return;
@@ -1006,7 +1073,7 @@ const actions: Record<string, () => void> = {
     if (mode !== 'edit' || !portEditor || !portEditorNode) return;
     try {
       const node = portEditorNode;
-      if (!graph.getCellById(node.id)) throw new Error('设备已不存在');
+      if (!graph.getCellById(node.id)) throw new Error('节点已不存在');
       const configuration = portEditor.read();
       const old = node.getData<DeviceData>();
       assertConnectedPortsPreserved(devicePorts(old), configuration.ports, connectedPortIds(node));
@@ -1036,7 +1103,7 @@ const actions: Record<string, () => void> = {
     else panel.requestFullscreen().catch(() => toast('浏览器未允许全屏，可使用浏览器全屏功能', true));
   },
   alarms: showAlarms,
-  help: () => showModal('使用指南', `<p class="modal-description">这是用于制作和复用拓扑的工作台。编辑节点与连接，在查看模式下验证参数及状态。</p><ol class="help-list"><li><strong>编辑布局</strong><p>切换“拓扑编辑”。点击或拖入左侧设备；拖动节点时会按 10 px 网格吸附。</p></li><li><strong>连接设备</strong><p>从节点边缘的彩色端口拖向另一个同色端口。紫色 RF、金色 IF、绿色以太网。网络允许形成环路，禁止设备连到自身。</p></li><li><strong>多选与复制</strong><p>使用框选工具或按住 Ctrl、⌘、Shift 点选节点。Ctrl / ⌘ C / V 复制粘贴，Ctrl / ⌘ D 创建副本。内部连线随节点复制；副本生成新的设备 ID，需重新确认绑定。拖动已选节点整体移动，方向键微移，Shift 加速。</p></li><li><strong>调整走线</strong><p>点击连线，拖动圆点或线段中间的绿色手柄。点击线条增加拐点，双击拐点删除。走线采用手动控制，拖动设备后可按需调整邻接线段。</p></li><li><strong>保存与恢复</strong><p>编辑停止后自动保存草稿，刷新或切图自动恢复；“保存布局”建立手动保存版本。“草稿与历史”可恢复旧版本，恢复操作可撤销。“导出 / 导入”用 JSON 迁移配置。</p></li><li><strong>查看模式</strong><p>每两秒更新模拟参数，布局保持不变。点击设备查看详情；点击“离线演示”验证状态变化。</p></li></ol><div class="shortcut-list"><span>Ctrl / ⌘ S <b>保存</b></span><span>Ctrl / ⌘ Z <b>撤销</b></span><span>Delete <b>删除选中</b></span><span>Esc <b>取消选择</b></span><span>E / M <b>编辑 / 监控</b></span></div><button class="button" data-action="reset">${icon('RotateCcw', 15)}恢复示例拓扑</button>`),
+  help: () => showModal('使用指南', `<p class="modal-description">这是用于制作和复用拓扑的工作台。编辑节点与连接，在查看模式下验证参数及状态。</p><ol class="help-list"><li><strong>编辑布局</strong><p>切换“拓扑编辑”。点击或拖入左侧节点；拖动节点时会按 10 px 网格吸附。</p></li><li><strong>连接节点</strong><p>从节点边缘的彩色端口拖向另一个同色端口。紫色 RF、金色 IF、绿色以太网。网络允许形成环路，禁止节点连到自身。</p></li><li><strong>多选与复制</strong><p>使用框选工具或按住 Ctrl、⌘、Shift 点选节点。Ctrl / ⌘ C / V 复制粘贴，Ctrl / ⌘ D 创建副本。内部连线随节点复制；副本生成新的业务对象 ID，需重新确认绑定。拖动已选节点整体移动，方向键微移，Shift 加速。</p></li><li><strong>调整走线</strong><p>点击连线，拖动圆点或线段中间的绿色手柄。点击线条增加拐点，双击拐点删除。走线采用手动控制，拖动节点后可按需调整邻接线段。</p></li><li><strong>对齐与锁定</strong><p>工具栏和右键菜单支持六种对齐、等距分布和指定间距；锁定节点会跳过移动及批量删除，所有批量操作可一步撤销。</p></li><li><strong>工作区与属性</strong><p>顶部左侧按钮折叠节点库，画布右上角按钮折叠属性栏。拖动侧栏分隔线调整宽度，方向键微调，双击恢复默认。属性按分区展开，输入错误会就地提示。</p></li><li><strong>保存与恢复</strong><p>编辑停止后自动保存草稿，刷新或切图自动恢复；“保存布局”建立手动保存版本。“草稿与历史”可恢复旧版本，恢复操作可撤销。“导出 / 导入”用 JSON 迁移配置。</p></li><li><strong>查看模式</strong><p>每两秒更新模拟参数，布局保持不变。点击节点查看详情；点击“离线演示”验证状态变化。</p></li></ol><div class="shortcut-list"><span>Ctrl / ⌘ S <b>保存</b></span><span>Ctrl / ⌘ Z <b>撤销</b></span><span>Delete <b>删除选中</b></span><span>Esc <b>取消选择</b></span><span>E / M <b>编辑 / 查看</b></span></div><button class="button" data-action="reset">${icon('RotateCcw', 15)}恢复示例拓扑</button>`),
 
   'close-modal': () => $<HTMLDialogElement>('#modal').close(),
   reset: () => { flushHistory(); resetOutage(); const sample = sampleDocument(activeDocument.category); applyEditorDocument({ ...activeDocument, templates: sample.templates, topology: sample.topology }, true); flushHistory(); $<HTMLDialogElement>('#modal').close(); setMode(mode); toast('已恢复当前分类的示例，可撤销'); },
@@ -1044,14 +1111,16 @@ const actions: Record<string, () => void> = {
 
 document.addEventListener('click', (event) => {
   const target = event.target as HTMLElement;
+  const preview = target.closest<HTMLElement>('[data-preview-document]');
+  if (preview) { handleDocumentAction('open', preview.dataset.previewDocument!); return; }
   const restore = target.closest<HTMLElement>('[data-restore-version]');
   if (restore && !(restore as HTMLButtonElement).disabled) { restoreLocalVersion(restore.dataset.restoreVersion!); return; }
   const docAction = target.closest<HTMLElement>('[data-document-action]');
   if (docAction && !(docAction as HTMLButtonElement).disabled) { handleDocumentAction(docAction.dataset.documentAction!, docAction.dataset.documentId!); return; }
   const action = target.closest<HTMLElement>('[data-action]')?.dataset.action;
-  if (action && actions[action]) { actions[action](); return; }
+  if (action && actions[action]) { if (target.closest('#sidebar')) workbench.closeDrawer(); actions[action](); return; }
   const device = target.closest<HTMLElement>('[data-device]')?.dataset.device as DeviceKind;
-  if (device && Object.hasOwn(devices, device)) { addFromLibrary(device); return; }
+  if (device && Object.hasOwn(devices, device)) { addFromLibrary(device); workbench.closeDrawer(); return; }
   const filterButton = target.closest<HTMLButtonElement>('[data-filter]');
   if (filterButton) {
     const kind = filterButton.dataset.filter as LinkKind;

@@ -110,7 +110,7 @@ test('取消参数后节点收紧，连接点跟随，撤销与刷新保持正�
   await page.reload();
   await expect(card).toHaveAttribute('data-metric-count', '0');
   await expect(card.locator('.device-metrics')).toHaveCount(0);
-  const documentId = await page.locator('body').getAttribute('data-document-id');
+  const documentId = await page.locator('body[data-document-id]').getAttribute('data-document-id');
   await page.goto(`/viewer.html?document=${documentId}`);
   const displayed = page.locator('#standalone-viewer [data-device-node="sw-01"]');
   await expect(displayed).toHaveAttribute('data-metric-count', '0');

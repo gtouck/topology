@@ -4,7 +4,7 @@ import { sampleDocument } from '../../src/document';
 test('新建、重命名、复制、切换和删除拓扑，保留未手动保存的布局', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('.device-card')).toHaveCount(8);
-  const originalId = await page.locator('body').getAttribute('data-document-id');
+  const originalId = await page.locator('body[data-document-id]').getAttribute('data-document-id');
   await page.locator('.mode-switch [data-action="edit"]').click();
   await page.locator('[data-device="module"]').click();
   await expect(page.locator('.device-card')).toHaveCount(9);
@@ -15,7 +15,7 @@ test('新建、重命名、复制、切换和删除拓扑，保留未手动保�
   await page.locator('[data-action="create-document"]').click();
   await expect(page.locator('.device-card')).toHaveCount(4);
   await expect(page.locator('#crumb-document')).toHaveText('卫星 A');
-  const satelliteId = await page.locator('body').getAttribute('data-document-id');
+  const satelliteId = await page.locator('body[data-document-id]').getAttribute('data-document-id');
   await page.locator('.heading-actions [data-action="library"]').click();
   await page.locator(`[data-document-action="open"][data-document-id="${originalId}"]`).click();
   await expect(page.locator('.device-card')).toHaveCount(9);
@@ -28,7 +28,7 @@ test('新建、重命名、复制、切换和删除拓扑，保留未手动保�
   await expect(page.locator('.document-card h3', { hasText: '卫星逻辑图' })).toHaveCount(1);
   await page.locator(`[data-document-action="copy"][data-document-id="${satelliteId}"]`).click();
   await expect(page.locator('.document-card')).toHaveCount(3);
-  const copyId = await page.locator('body').getAttribute('data-document-id');
+  const copyId = await page.locator('body[data-document-id]').getAttribute('data-document-id');
   await page.locator(`[data-document-action="delete"][data-document-id="${copyId}"]`).click();
   await page.locator('[data-document-action="confirm-delete"]').click();
   await expect(page.locator('.document-card')).toHaveCount(2);

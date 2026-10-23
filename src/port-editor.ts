@@ -30,13 +30,13 @@ export class PortEditor {
 
   private render() {
     this.root.innerHTML = `
-      <p class="modal-description">端口按所在边等距排布，数量增加时自动扩展设备尺寸。名称在画布悬停时显示，保持展示界面简洁。</p>
+      <p class="modal-description">端口按所在边等距排布，数量增加时自动扩展节点尺寸。名称在画布悬停时显示，保持展示界面简洁。</p>
       <div class="port-editor-top"><div class="port-layout-preview" id="port-layout-preview"></div><div class="port-layout-settings">
         <label class="field">最小端口间距（px）<input type="number" id="port-spacing" min="18" max="48" step="1" value="${this.spacing}" /></label>
         <button type="button" class="button full-width" data-port-action="balance">${icon('Layers', 15)}均衡排到四边</button>
         <p>同一边按下方列表顺序排列。可逐个调整所在边和顺序。</p>
       </div></div>
-      <div class="port-bulk"><div class="port-bulk-title">批量新增端口 <span>每台设备最多 ${MAX_DEVICE_PORTS} 个</span></div><div class="port-bulk-fields">
+      <div class="port-bulk"><div class="port-bulk-title">批量新增端口 <span>每个节点最多 ${MAX_DEVICE_PORTS} 个</span></div><div class="port-bulk-fields">
         <label class="field">名称前缀<input id="port-prefix" maxlength="12" value="${esc(this.bulk.prefix)}" /></label>
         <label class="field">新增数量<input type="number" id="port-count" min="1" max="64" value="${this.bulk.count}" /></label>
         <label class="field">类型<select id="port-bulk-kind">${Object.entries(linkTypes).map(([kind, def]) => `<option value="${kind}" ${kind === this.bulk.kind ? 'selected' : ''}>${def.label}</option>`).join('')}</select></label>
@@ -45,7 +45,7 @@ export class PortEditor {
       <div class="port-table-heading"><strong id="port-table-count">端口列表 · ${this.ports.length}</strong><span>已连接端口不能删除或更改类型</span></div>
       <div class="port-editor-table"><div class="port-editor-columns"><span>名称 / 连接状态</span><span>类型</span><span>所在边</span><span>排序 / 删除</span></div><div id="port-editor-rows"></div></div>
       <p class="port-editor-error" id="port-editor-error" role="alert"></p>
-      <p class="port-editor-note">应用后保留端口 ID、已有连线和手动拐点。设备尺寸或端口位置变化后，可手动调整周边设备和走线。</p>`;
+      <p class="port-editor-note">应用后保留端口 ID、已有连线和手动拐点。节点尺寸或端口位置变化后，可手动调整周边节点和走线。</p>`;
     this.renderRows(); this.renderPreview();
   }
 

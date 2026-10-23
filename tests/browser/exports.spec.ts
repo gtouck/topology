@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { readFile } from 'node:fs/promises';
+import { readFile, copyFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
 async function exportFile(page: Page, format: string) {
@@ -35,11 +35,12 @@ test('SVG 和 PNG 导出全部节点和连线，编辑选择与筛选不影响�
   expect(await page.evaluate(() => window.stationPrototype.snapshot())).toEqual(before);
 });
 
-test('HTML 下载后完全离线打开，初始参数与状态保留且可以由宿主更新', async ({ page, context }) => {
+test('HTML 下载后完全离线打开，初始参数与状态保留且可以由宿主更新', async ({ page, context }, testInfo) => {
   await page.locator('[data-action="pause"]').click();
   const value = await page.locator('[data-device-node="ant-01"] [data-metric="azimuth"]').textContent();
   await page.locator('[data-action="outage"]').click();
-  const path = await exportFile(page, 'html');
+  const path = testInfo.outputPath('topology.html');
+  await copyFile(await exportFile(page, 'html'), path);
   const html = await readFile(path, 'utf8');
   expect(html).not.toMatch(/<script\s+src=|<link\b/);
   const networkRequests: string[] = [];
