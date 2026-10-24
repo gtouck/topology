@@ -5,6 +5,7 @@ import { escapeHtml, vectorIcon } from './icons';
 import { drawingOrder } from './diagram';
 import { diagramSvg } from './diagram-svg';
 import { nodeStatus, statusGlyph } from './node-status';
+import { resolveLinkState, type LinkTelemetryData } from './link-state';
 
 export interface ExportNodeState { status: DeviceStatus; values: Record<string, number>; label?: string; pending?: boolean }
 export type ExportState = Record<string, ExportNodeState>;
@@ -59,7 +60,7 @@ function midpoint(points: Point[]) {
 }
 
 /** No foreignObject, external fonts, images, stylesheets or editing controls. */
-export function renderTopologySvg(document: TopologyDocument, state: ExportState = {}, renderedEdges: Record<string, ExportEdgeGeometry> = {}): SvgExport {
+export function renderTopologySvg(document: TopologyDocument, state: ExportState = {}, renderedEdges: Record<string, ExportEdgeGeometry> = {}, linkData: LinkTelemetryData = {}): SvgExport {
   if (!document.topology.nodes.length && !document.topology.elements?.length) throw new Error('请先添加节点再导出图片');
   const definitions = definitionsFromTemplates(document.templates);
   const nodes = new Map(document.topology.nodes.map((node) => [node.id, { ...node, geometry: deviceGeometry(node.data, definitions) }]));
@@ -76,16 +77,18 @@ export function renderTopologySvg(document: TopologyDocument, state: ExportState
     const current = renderedEdges[edge.id];
     const path = current?.path || roundedPath(points);
     const center = current?.label || midpoint(points);
-    const offline = [edge.source, edge.target].some((end) => state[end.cell]?.pending || (state[end.cell]?.status || nodes.get(end.cell)!.data.status) === 'offline');
+    const endpoints = [edge.source, edge.target].map(end => ({ status: state[end.cell]?.status || nodes.get(end.cell)!.data.status, pending: state[end.cell]?.pending }));
+    const link = resolveLinkState(edge, endpoints, Object.hasOwn(linkData, edge.id) ? linkData[edge.id] : undefined);
+    const offline = link.status === 'down';
     const appearance = cableAppearance(edge.kind, edge.appearance);
-    const layers = cableAttributes(appearance, offline, 'export-braid');
+    const layers = cableAttributes(appearance, offline, 'export-braid', link.status === 'unknown');
     const paths = (['line', 'core', 'texture', 'shine'] as const).map((name) => {
       const attrs = layers[name];
       return `<path d="${esc(path)}" fill="none" stroke="${attrs.stroke}" stroke-width="${attrs.strokeWidth}" stroke-dasharray="${'strokeDasharray' in attrs ? attrs.strokeDasharray : ''}" opacity="${'opacity' in attrs ? attrs.opacity : 1}"/>`;
     }).join('');
     let arrow = '';
     if (appearance.arrows) {
-      const color = offline ? '#aeb8b3' : appearance.color;
+      const color = layers.direction.targetMarker!.fill;
       defs.push(`<marker id="export-arrow-${index}" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="8" refX="7" refY="3" orient="auto" overflow="visible"><path d="M0 0L7 3L0 6Z" fill="${color}"/></marker>`);
       arrow = `<path d="${esc(path)}" fill="none" stroke="none" marker-end="url(#export-arrow-${index})"/>`;
     }
@@ -95,7 +98,7 @@ export function renderTopologySvg(document: TopologyDocument, state: ExportState
       bounds.push({ x: center.x - width / 2, y: center.y - 10 }, { x: center.x + width / 2, y: center.y + 10 });
       label = `<g><rect x="${number(center.x - width / 2)}" y="${number(center.y - 9)}" width="${number(width)}" height="18" rx="3" fill="#f9fbfa"/>${text(center.x, center.y + 3.5, edge.label, 10, '#7c8c86', 'text-anchor="middle"')}</g>`;
     }
-    return `<g data-edge-id="${esc(edge.id)}" stroke-linecap="round" stroke-linejoin="round">${paths}${arrow}${label}</g>`;
+    return `<g data-edge-id="${esc(edge.id)}" data-link-status="${link.status}" stroke-linecap="round" stroke-linejoin="round">${paths}${arrow}${label}</g>`;
   }).join('');
   const cardMarkup = new Map<string, string>();
   [...nodes.values()].forEach((node) => {

@@ -2,6 +2,7 @@ import type { TopologyDocument } from './document';
 import type { ExportState } from './export-svg';
 import type { TelemetryData } from './runtime-data';
 import { escapeHtml as esc } from './icons';
+import { parseLinkData, resolveLinkState, type LinkTelemetryData } from './link-state';
 
 /** JSON is embedded as data, never as an executable expression. */
 export function scriptJson(value: unknown) {
@@ -48,9 +49,14 @@ export function exportTelemetry(document: TopologyDocument, state: ExportState) 
 }
 
 /** One file, including its viewer runtime: no server or network needed to open it. */
-export function renderTopologyHtml(document: TopologyDocument, state: ExportState, runtime: string) {
+export function renderTopologyHtml(document: TopologyDocument, state: ExportState, runtime: string, linkData?: LinkTelemetryData) {
   if (!runtime.trim()) throw new Error('展示组件未生成，请重新运行 bun run dev 或 bun run build');
   const snapshot = exportTelemetry(document, state);
+  const links = parseLinkData(linkData ?? Object.fromEntries(document.topology.edges.map(edge => {
+    const endpoints = [edge.source, edge.target].map(end => ({ status: state[end.cell]?.status || document.topology.nodes.find(node => node.id === end.cell)!.data.status, pending: state[end.cell]?.pending }));
+    const current = resolveLinkState(edge, endpoints);
+    return [edge.id, { status: current.status, active: current.active }];
+  })));
   const runtimeScript = runtime.replace(/<\/script/gi, '<\\/script');
   return `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(document.name)}</title>
@@ -58,16 +64,18 @@ export function renderTopologyHtml(document: TopologyDocument, state: ExportStat
 <body><header><div><h1>${esc(document.name)}</h1>${document.description ? `<p>${esc(document.description)}</p>` : ''}</div><span id="data-status">导出时数据快照</span></header><main id="topology"></main><div id="error" hidden></div>
 <script id="topology-document" type="application/json">${scriptJson(snapshot.definition)}</script>
 <script id="topology-data" type="application/json">${scriptJson(snapshot.data)}</script>
+<script id="topology-link-data" type="application/json">${scriptJson(links)}</script>
 <script>${runtimeScript}</script>
 <script>
 try {
   const definition = JSON.parse(document.getElementById('topology-document').textContent);
   const data = JSON.parse(document.getElementById('topology-data').textContent);
+  const linkData = JSON.parse(document.getElementById('topology-link-data').textContent);
   const viewer = new TopologyKit.TopologyViewer(document.getElementById('topology'), {
-    definition, data,
+    definition, data, linkData,
     onNodeClick(event) { window.dispatchEvent(new CustomEvent('topology:node-click', { detail: event })); }
   });
-  for (const method of ['setData', 'updateData']) {
+  for (const method of ['setData', 'updateData', 'setLinkData', 'updateLinkData']) {
     const original = viewer[method].bind(viewer);
     viewer[method] = (data) => { original(data); document.getElementById('data-status').textContent = '数据更新 · ' + new Date().toLocaleTimeString(); };
   }

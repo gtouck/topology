@@ -9,15 +9,20 @@ import cardStyles from './viewer-cards.css?inline';
 import statusStyles from './node-status.css?inline';
 import { updateNodeStatus } from './node-status-ui';
 import { addDiagramNode, isDeviceNode, syncDrawingLayers } from './diagram-rendering';
+import { parseLinkData, mergeLinkData, resolveLinkState, type LinkTelemetryData, type LinkTelemetryPatch } from './link-state';
+import { renderLink } from './link-rendering';
+import flowStyles from './link-flow.css?inline';
 
 export interface TopologyViewerOptions {
   definition: unknown;
   data?: TelemetryData;
+  linkData?: LinkTelemetryData;
+  animations?: boolean;
   controls?: boolean;
   onNodeClick?: (event: { node: DeviceRecord; source: string }) => void;
 }
 
-const styles = `${cardStyles}${statusStyles.replaceAll('#graph ', '.topology-viewer ')}
+const styles = `${cardStyles}${statusStyles.replaceAll('#graph ', '.topology-viewer ')}${flowStyles.replaceAll('#graph ', '.topology-viewer ')}
 .topology-viewer{position:relative;width:100%;height:100%;min-height:160px;overflow:hidden;background:#f9fbfa;color:#42584a;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;isolation:isolate}
 .topology-viewer *{box-sizing:border-box}.topology-viewer .tv-canvas{position:absolute;inset:0}
 .topology-viewer .diagram-element{width:100%;height:100%;overflow:hidden}.topology-viewer .diagram-group{pointer-events:none}.topology-viewer .diagram-element svg{display:block;font-family:Arial,"PingFang SC",sans-serif}
@@ -35,11 +40,11 @@ export class TopologyViewer {
   private definition!: TopologyDocument;
   private definitions: Record<string, DeviceDefinition> = {};
   private data: TelemetryData = {};
+  private linkData: LinkTelemetryData = {};
   private destroyed = false;
   private observer: ResizeObserver;
   private frame = 0;
   private textureId = newId('braid');
-  private styleKeys = new Map<string, string>();
 
   constructor(container: HTMLElement, private options: TopologyViewerOptions) {
     const checked = parseDocument(options.definition);
@@ -68,6 +73,7 @@ export class TopologyViewer {
     this.observer.observe(container);
     this.setDefinition(checked);
     if (options.data) this.setData(options.data);
+    if (options.linkData) this.setLinkData(options.linkData);
   }
 
   private alive() { if (this.destroyed) throw new Error('展示组件已销毁'); }
@@ -76,14 +82,14 @@ export class TopologyViewer {
   setDefinition(input: unknown) {
     this.alive();
     const definition = parseDocument(input); // Validate before touching an existing view.
-    this.definition = definition; this.definitions = definitionsFromTemplates(definition.templates); this.data = {}; this.styleKeys.clear();
+    this.definition = definition; this.definitions = definitionsFromTemplates(definition.templates); this.data = {}; this.linkData = {};
     this.graph.clearCells();
     for (const record of definition.topology.nodes) addRenderedNode(this.graph, record, {
       definitions: this.definitions, status: (n) => this.nodeState(n).status,
       pending: (n) => this.nodeState(n).pending,
       value: (n, key) => this.nodeState(n).values[key], statusLabel: (n) => this.nodeState(n).label,
     });
-    for (const edge of definition.topology.edges) this.graph.addEdge({ id: edge.id, shape: 'station-cable', source: edge.source, target: edge.target, vertices: edge.vertices, connector: { name: 'rounded', args: { radius: 8 } }, labels: edgeLabels(edge.label), data: { kind: edge.kind, appearance: edge.appearance }, attrs: cableAttributes(cableAppearance(edge.kind, edge.appearance), false, this.textureId), zIndex: 0 });
+    for (const edge of definition.topology.edges) this.graph.addEdge({ id: edge.id, shape: 'station-cable', source: edge.source, target: edge.target, vertices: edge.vertices, connector: { name: 'rounded', args: { radius: 8 } }, labels: edgeLabels(edge.label), data: { kind: edge.kind, appearance: edge.appearance, status: edge.status, flow: edge.flow }, attrs: cableAttributes(cableAppearance(edge.kind, edge.appearance), false, this.textureId), zIndex: 0 });
     for (const element of definition.topology.elements || []) addDiagramNode(this.graph, element, () => this.definition.topology);
     syncDrawingLayers(this.graph, definition.topology);
     this.root.querySelector('.tv-empty')?.remove();
@@ -93,6 +99,13 @@ export class TopologyViewer {
   }
 
   getDefinition() { this.alive(); return structuredClone(this.definition); }
+
+  setLinkData(data: LinkTelemetryData) {
+    this.alive(); const checked = parseLinkData(data); this.linkData = checked; this.refresh();
+  }
+  updateLinkData(patch: LinkTelemetryPatch) {
+    this.alive(); const checked = mergeLinkData(this.linkData, patch); this.linkData = checked; this.refresh();
+  }
 
   setData(data: TelemetryData) {
     this.alive();
@@ -127,9 +140,10 @@ export class TopologyViewer {
     this.graph.getEdges().forEach((edge) => {
       const data = edge.getData();
       const appearance = cableAppearance(data.kind, data.appearance);
-      const down = [edge.getSourceCell(), edge.getTargetCell()].some((n) => n?.isNode() && this.nodeState(n).status === 'offline');
-      const key = JSON.stringify([appearance, down]);
-      if (this.styleKeys.get(edge.id) !== key) { edge.attr(cableAttributes(appearance, down, this.textureId)); this.styleKeys.set(edge.id, key); }
+      const endpoints = [edge.getSourceCell(), edge.getTargetCell()].filter(isDeviceNode).map(node => this.nodeState(node));
+      const config = data;
+      const state = resolveLinkState(config, endpoints, Object.hasOwn(this.linkData, edge.id) ? this.linkData[edge.id] : undefined, true);
+      renderLink(this.graph, edge, appearance, state, { flow: config.flow, animate: this.options.animations !== false, textureId: this.textureId });
     });
   }
 
@@ -141,6 +155,6 @@ export class TopologyViewer {
   fit() { this.alive(); if (this.graph.getNodes().length) this.graph.zoomToFit({ padding: 36, maxScale: 1 }); }
   destroy() {
     if (this.destroyed) return;
-    this.destroyed = true; cancelAnimationFrame(this.frame); this.observer.disconnect(); this.root.onclick = null; this.graph.dispose(); this.root.remove(); this.data = {}; this.styleKeys.clear();
+    this.destroyed = true; cancelAnimationFrame(this.frame); this.observer.disconnect(); this.root.onclick = null; this.graph.dispose(); this.root.remove(); this.data = {}; this.linkData = {};
   }
 }

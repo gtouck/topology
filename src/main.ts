@@ -11,6 +11,8 @@ import type { ExportState } from './export-svg';
 import { EditorTelemetry, formatMetricValue, type EditorDataMode } from './editor-telemetry';
 import { metricOptions, metricDetails, metricValueHtml } from './device-details';
 import { updateNodeStatus, updateStatusBadge } from './node-status-ui';
+import { defaultLinkFlow, flowDirections, flowSpeeds, linkStatusLabels, linkStateLabel, parseLinkStatus, parseLinkFlow, parseLinkData, resolveLinkState, type LinkStatus, type LinkFlow, type LinkTelemetryData, type ResolvedLinkState } from './link-state';
+import { renderLink } from './link-rendering';
 import { copySelection, pasteSelection, moveSelection, deleteSelection, setPositionLocks, type TopologyClipboard } from './editor-commands';
 import { alignNodes, distributeNodes, alignmentLabels, MAX_LAYOUT_GAP, type Alignment, type LayoutAxis, type LayoutResult } from './layout-commands';
 import { EditorSelection } from './editor-selection';
@@ -30,6 +32,7 @@ import './style.css';
 import './workbench.css';
 import './node-status.css';
 import './workbench-theme.css';
+import './link-flow.css';
 
 type Mode = 'monitor' | 'edit';
 let mode: Mode = 'monitor';
@@ -37,6 +40,8 @@ let selected: Cell | null = null;
 let paused = false;
 let outage = false;
 let outageNodeId: string | null = null;
+let linkData: LinkTelemetryData = {};
+const linkDemonstration = new Map<string, { status: LinkStatus }>();
 let loading = false;
 let tick = 0;
 let lastUpdate = new Date();
@@ -180,17 +185,23 @@ const workbench = new WorkbenchLayout(() => toast('界面偏好无法保存，�
 $('#inspector').addEventListener('toggle', (event) => {
   if (event.target instanceof HTMLDetailsElement && $('#inspector').contains(event.target)) workbench.rememberSection(event.target);
 }, true);
-const renderedCableStyles = new WeakMap<Edge, string>();
-
+function runtimeLinkState(edge: Edge) {
+  const endpoints = [edge.getSourceCell(), edge.getTargetCell()].filter(isDeviceNode).map(node => ({ status: runtimeStatus(node), pending: telemetry.mode === 'external' && !values.has(node.id) }));
+  const live = telemetry.mode === 'external' ? Object.hasOwn(linkData, edge.id) ? linkData[edge.id] : undefined : linkDemonstration.get(edge.id);
+  return resolveLinkState(edge.getData() || {}, endpoints, live, telemetry.mode === 'external');
+}
+function updateLinkBadge(state: ResolvedLinkState) {
+  const badge = document.querySelector<HTMLElement>('#edge-runtime-status');
+  if (badge) { badge.dataset.linkStatus = state.status; badge.textContent = linkStateLabel(state); }
+  const demo = document.querySelector<HTMLButtonElement>('[data-action="toggle-link-demo"]');
+  if (demo) { demo.disabled = telemetry.mode === 'external' || state.reason === 'endpoint'; demo.textContent = state.status === 'down' ? '模拟链路连通' : '模拟链路断开'; }
+}
 function renderCable(edge: Edge) {
   const kind = (edge.getData()?.kind || 'ethernet') as LinkKind;
   const appearance = cableAppearance(kind, edge.getData()?.appearance);
-  const down = [edge.getSourceCell(), edge.getTargetCell()].some((end) => end?.isNode() && runtimeStatus(end) === 'offline');
-  const key = JSON.stringify([appearance, down]);
-  if (renderedCableStyles.get(edge) !== key) {
-    edge.attr(cableAttributes(appearance, down), { runtime: true });
-    renderedCableStyles.set(edge, key);
-  }
+  const state = runtimeLinkState(edge);
+  renderLink(graph, edge, appearance, state, { flow: edge.getData()?.flow, animate: mode === 'monitor' && !(telemetry.mode === 'simulation' && paused) });
+  if (selected?.id === edge.id) updateLinkBadge(state);
 }
 
 function addDevice(record: DeviceRecord) {
@@ -206,7 +217,7 @@ function addDevice(record: DeviceRecord) {
 function addLink(record: LinkRecord) {
   return graph.addEdge({ id: record.id, shape: 'station-cable', source: record.source, target: record.target, vertices: record.vertices,
     router: 'normal', connector: { name: 'rounded', args: { radius: 8 } },
-    data: { kind: record.kind, label: record.label, ...(record.appearance ? { appearance: structuredClone(record.appearance) } : {}) }, labels: edgeLabels(record.label),
+    data: { kind: record.kind, label: record.label, ...(record.appearance ? { appearance: structuredClone(record.appearance) } : {}), ...(record.status ? { status: record.status } : {}), ...(record.flow ? { flow: structuredClone(record.flow) } : {}) }, labels: edgeLabels(record.label),
     attrs: cableAttributes(cableAppearance(record.kind, record.appearance)), zIndex: 0,
   });
 }
@@ -215,14 +226,18 @@ function snapshot(): Snapshot {
     nodes: deviceNodes().map((node) => ({ id: node.id, ...node.getPosition(), data: structuredClone(node.getData<DeviceData>()) })),
     ...(elementsPresent || elementNodes().length ? { elements: elementNodes().map((node) => ({ ...structuredClone(diagramOf(node)!), ...node.getPosition(), ...node.size() })) } : {}),
     ...(layerOrder ? { order: [...layerOrder.filter((id) => graph.getCellById(id)?.isNode()), ...graph.getNodes().map((node) => node.id).filter((id) => !layerOrder!.includes(id))] } : {}),
-    edges: graph.getEdges().filter((e) => e.getSourceCellId() && e.getTargetCellId()).map((edge) => ({ id: edge.id, source: { cell: edge.getSourceCellId(), port: edge.getSourcePortId() }, target: { cell: edge.getTargetCellId(), port: edge.getTargetPortId() }, kind: edge.getData()?.kind || 'ethernet', label: edge.getData()?.label || '', vertices: edge.getVertices().map((p) => ({ x: p.x, y: p.y })), ...(edge.getData()?.appearance ? { appearance: structuredClone(edge.getData().appearance) } : {}) })),
+    edges: graph.getEdges().filter((e) => e.getSourceCellId() && e.getTargetCellId()).map((edge) => ({ id: edge.id, source: { cell: edge.getSourceCellId(), port: edge.getSourcePortId() }, target: { cell: edge.getTargetCellId(), port: edge.getTargetPortId() }, kind: edge.getData()?.kind || 'ethernet', label: edge.getData()?.label || '', vertices: edge.getVertices().map((p) => ({ x: p.x, y: p.y })), ...(edge.getData()?.appearance ? { appearance: structuredClone(edge.getData().appearance) } : {}), ...(edge.getData()?.status ? { status: edge.getData().status } : {}), ...(edge.getData()?.flow ? { flow: structuredClone(edge.getData().flow) } : {}) })),
   };
 }
 function loadTopology(data: Snapshot, fit = false, preserveTelemetry = false) {
   loading = true; clearTimeout(recordTimer); selected = null;
   dragSession = null; resizeBefore = null; transform.clearWidgets(); graph.cleanSelection();
-  if (preserveTelemetry) telemetry.prune(new Set(data.nodes.map((node) => node.id)));
-  else telemetry.clear();
+  if (preserveTelemetry) {
+    telemetry.prune(new Set(data.nodes.map((node) => node.id)));
+    const ids = new Set(data.edges.map(edge => edge.id));
+    linkData = Object.fromEntries(Object.entries(linkData).filter(([id]) => ids.has(id)));
+    for (const id of linkDemonstration.keys()) if (!ids.has(id)) linkDemonstration.delete(id);
+  } else { telemetry.clear(); linkData = {}; linkDemonstration.clear(); }
   layerOrder = data.order ? [...data.order] : undefined; elementsPresent = data.elements !== undefined; legendEdgesKey = '';
   graph.clearCells(); data.nodes.forEach(addDevice); data.edges.forEach(addLink);
   for (const element of data.elements || []) addDiagramNode(graph, element, snapshot);
@@ -347,7 +362,7 @@ function setMode(next: Mode) {
   $('#footer-mode').textContent = mode === 'edit' ? '编辑模式' : '查看模式';
   $('#footer-hint').textContent = mode === 'edit' ? '拖动节点布局 · 从端口连线 · 选中连线调整拐点' : '点击节点查看参数 · 滚轮缩放 · 拖动画布平移';
   graph.getEdges().forEach((e) => e.removeTools());
-  renderSidebar(); syncDataControls(); refreshSelection(); updateDocumentChrome();
+  renderSidebar(); syncDataControls(); refreshSelection(); updateDocumentChrome(); graph.getEdges().forEach(renderCable);
 }
 
 function updateCanvasTool() {
@@ -378,13 +393,14 @@ function syncDataControls() {
 
 function setDataMode(next: EditorDataMode) {
   if (!telemetry.setMode(next)) return;
-  paused = false; tick = 0; lastUpdate = new Date(); resetOutage();
+  paused = false; tick = 0; lastUpdate = new Date(); linkData = {}; resetOutage();
   syncDataControls(); renderSidebar(); updateRuntime(); if (mode === 'monitor') renderInspector();
 }
 
 $('#data-mode').addEventListener('change', (event) => setDataMode((event.target as HTMLSelectElement).value as EditorDataMode));
 
 function resetOutage() {
+  linkDemonstration.clear();
   outage = false;
   outageNodeId = null;
   const el = document.querySelector<HTMLElement>('[data-action="outage"]')!;
@@ -403,12 +419,20 @@ function readCableControls(): CableAppearance {
 
 function renderCableSettings(edge: Edge, kind: LinkKind) {
   const appearance = cableAppearance(kind, edge.getData()?.appearance);
+  const flow: LinkFlow = edge.getData()?.flow ?? defaultLinkFlow;
   return `<div class="cable-preview" id="edge-cable-preview">${cablePreview(appearance)}</div>${mode === 'edit' ? `
     <label class="field">线缆样式<select id="edge-cable-style">${Object.entries(cableStyles).map(([key, def]) => `<option value="${key}" ${key === appearance.style ? 'selected' : ''}>${def.label}</option>`).join('')}</select></label>
     <label class="field cable-width-label">线缆粗细 <output id="edge-cable-width-value">${appearance.width} px</output><input type="range" id="edge-cable-width" min="1" max="14" step="1" value="${appearance.width}" /></label>
     <div class="cable-color-row"><label for="edge-cable-color">线缆颜色</label><input type="color" id="edge-cable-color" value="${appearance.color}" /><span id="edge-cable-color-value">${appearance.color}</span></div>
     <label class="cable-arrows"><input type="checkbox" id="edge-cable-arrows" ${appearance.arrows ? 'checked' : ''} />显示方向箭头</label>
-    <p class="cable-style-description" id="edge-cable-description">${cableStyles[appearance.style].description}</p>` : `<div class="cable-summary"><span>${cableStyles[appearance.style].label}</span><span>${appearance.width} px${appearance.arrows ? ' · 有向' : ''}</span></div>`}`;
+    <p class="cable-style-description" id="edge-cable-description">${cableStyles[appearance.style].description}</p>
+    <div class="link-state-controls"><h4>状态与流转</h4>
+      <label class="field">初始链路状态<select id="edge-status">${Object.entries(linkStatusLabels).map(([key, label]) => `<option value="${key}" ${(edge.getData()?.status ?? 'up') === key ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+      <label class="cable-arrows"><input id="edge-flow-enabled" type="checkbox" ${flow.enabled ? 'checked' : ''}/>连通时显示流转动效</label>
+      <label class="field">流转方向<select id="edge-flow-direction">${Object.entries(flowDirections).map(([key, label]) => `<option value="${key}" ${flow.direction === key ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+      <label class="field">流转速度<select id="edge-flow-speed">${Object.entries(flowSpeeds).map(([key, label]) => `<option value="${key}" ${flow.speed === key ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+      <p class="field-hint">正向为上方端点 → 下方端点，流转方向独立于方向箭头。编辑画布静态，切换查看模式播放；宿主状态优先于初始状态。</p>
+    </div>` : `<div class="cable-summary"><span>${cableStyles[appearance.style].label}</span><span>${appearance.width} px${appearance.arrows ? ' · 有向' : ''}</span></div><p class="field-hint">${flow.enabled ? `${flowDirections[flow.direction]}流转 · ${flowSpeeds[flow.speed]}速` : '动效已关闭'}</p>`}`;
 }
 
 function updateCablePreview(event: Event) {
@@ -512,7 +536,7 @@ function renderInspector() {
     const target = graph.getCellById(edge.getTargetCellId()) as Node;
     panel.innerHTML = `
       <div class="inspector-header"><span>链路详情</span>${button('deselect', '关闭详情', 'X')}</div>
-      <div class="detail-identity"><span class="detail-device-icon" style="color:${linkTypes[kind].color}">${icon('Cable', 27)}</span><h3>${esc(edge.getData()?.label || linkTypes[kind].label)}</h3><span class="type-caption">${linkTypes[kind].label} / ${linkTypes[kind].short}</span></div>
+      <div class="detail-identity"><span class="detail-device-icon" style="color:${linkTypes[kind].color}">${icon('Cable', 27)}</span><h3>${esc(edge.getData()?.label || linkTypes[kind].label)}</h3><span class="type-caption">${linkTypes[kind].label} / ${linkTypes[kind].short}</span><span class="link-status-badge" id="edge-runtime-status"></span><p class="link-id">链路 ID：${esc(edge.id)}</p></div>
       <div class="detail-section"><h4>连接端点</h4>
         <div class="endpoint"><span class="tiny-dot green"></span><div><strong>${esc(source.getData<DeviceData>().title)}</strong><small>${esc(edge.getSourcePortId().toUpperCase())}</small></div></div><div class="endpoint-line"></div>
         <div class="endpoint"><span class="tiny-dot green"></span><div><strong>${esc(target.getData<DeviceData>().title)}</strong><small>${esc(edge.getTargetPortId().toUpperCase())}</small></div></div>
@@ -522,8 +546,9 @@ function renderInspector() {
         ${renderCableSettings(edge, kind)}
         ${mode === 'edit' ? `<button class="button full-width" data-action="apply-edge">${icon('Check', 15)}应用修改</button>` : ''}
       </div>
-      ${mode === 'edit' ? `<div class="inspector-callout">${icon('Move', 17)}<p>拖动绿色圆点调整拐点，拖动线段中间的手柄改变走线。点击线条添加拐点，双击拐点删除。查看模式会隐藏端口与编辑手柄。</p></div><button class="button danger inspector-bottom-button" data-action="delete">${icon('Trash2', 15)}删除这条连线</button>` : `<div class="inspector-callout">${icon('Info', 17)}<p>线缆保留编辑时设置的样式。真实链路状态需要接入后端采集数据。</p></div>`}
+      ${mode === 'edit' ? `<div class="inspector-callout">${icon('Move', 17)}<p>拖动绿色圆点调整拐点，拖动线段中间的手柄改变走线。点击线条添加拐点，双击拐点删除。查看模式会隐藏端口与编辑手柄。</p></div><button class="button danger inspector-bottom-button" data-action="delete">${icon('Trash2', 15)}删除这条连线</button>` : `<div class="detail-section"><button class="button full-width" data-action="toggle-link-demo" ${telemetry.mode === 'external' ? 'disabled' : ''}>${runtimeLinkState(edge).status === 'down' ? '模拟链路连通' : '模拟链路断开'}</button><p class="field-hint">宿主模式按链路 ID 接收真实状态。端点设备离线时链路断开；等待链路数据时保持静止。</p></div>`}
     `;
+    updateLinkBadge(runtimeLinkState(edge));
     return;
   }
   const node = selected as Node;
@@ -968,6 +993,9 @@ function captureExportState(): ExportState {
     })), label: runtimeLabel(node) }];
   }));
 }
+function captureLinkState(): LinkTelemetryData {
+  return Object.fromEntries(graph.getEdges().map(edge => { const state = runtimeLinkState(edge); return [edge.id, { status: state.status, active: state.active }]; }));
+}
 
 let exporting = false;
 async function exportTopology(format: 'json' | 'svg' | 'png' | 'html') {
@@ -978,12 +1006,12 @@ async function exportTopology(format: 'json' | 'svg' | 'png' | 'html') {
   buttons.forEach((button) => { button.disabled = true; });
   if (status) status.textContent = '正在生成文件…';
   try {
-    const definition = captureDocument(), state = captureExportState();
+    const definition = captureDocument(), state = captureExportState(), links = captureLinkState();
     let blob: Blob;
     if (format === 'json') blob = new Blob([JSON.stringify(definition, null, 2)], { type: 'application/json' });
-    else if (format === 'html') blob = new Blob([await standaloneHtml(definition, state)], { type: 'text/html;charset=utf-8' });
+    else if (format === 'html') blob = new Blob([await standaloneHtml(definition, state, links)], { type: 'text/html;charset=utf-8' });
     else {
-      const image = graphSvg(graph, definition, state);
+      const image = graphSvg(graph, definition, state, links);
       blob = format === 'svg' ? new Blob([image.svg], { type: 'image/svg+xml;charset=utf-8' }) : await svgToPng(image);
     }
     downloadBlob(blob, exportFilename(definition.name, format === 'json' ? 'topology.json' : format));
@@ -1192,12 +1220,19 @@ const actions: Record<string, () => void> = {
   'apply-edge': () => {
     if (mode !== 'edit' || !selected?.isEdge()) return;
     const appearance = readCableControls();
+    const status = parseLinkStatus($<HTMLSelectElement>('#edge-status').value);
+    const flow = parseLinkFlow({ enabled: $<HTMLInputElement>('#edge-flow-enabled').checked, direction: $<HTMLSelectElement>('#edge-flow-direction').value, speed: $<HTMLSelectElement>('#edge-flow-speed').value });
     flushHistory();
     const label = $<HTMLInputElement>('#edge-label-input').value.trim();
-    selected.setData({ ...selected.getData(), label, appearance });
+    selected.setData({ ...selected.getData(), label, appearance, status, flow });
     selected.setLabels(edgeLabels(label));
     renderCable(selected); flushHistory(); renderInspector();
-    toast('链路名称和线缆样式已更新，保存布局后可恢复');
+    toast('链路样式、初始状态和流转设置已更新');
+  },
+  'toggle-link-demo': () => {
+    if (mode !== 'monitor' || telemetry.mode !== 'simulation' || !selected?.isEdge()) return;
+    linkDemonstration.set(selected.id, { status: runtimeLinkState(selected).status === 'down' ? 'up' : 'down' });
+    updateRuntime(); renderInspector();
   },
   fullscreen: () => {
     const panel = $('.topology-panel');
@@ -1381,15 +1416,26 @@ openDocument(library.activeId);
 setInterval(() => { if (paused || telemetry.mode !== 'simulation') return; tick++; lastUpdate = new Date(); updateRuntime(); }, 2000);
 
 // A stable interface for integration and browser verification; telemetry never changes layout.
-declare global { interface Window { stationPrototype: { graph: Graph; snapshot: typeof snapshot; setDataMode: typeof setDataMode; getDataMode: () => EditorDataMode; updateTelemetry: (deviceId: string, metrics: Record<string, number>, status?: DeviceStatus) => number } } }
+declare global { interface Window { stationPrototype: { graph: Graph; snapshot: typeof snapshot; setDataMode: typeof setDataMode; getDataMode: () => EditorDataMode; updateTelemetry: (deviceId: string, metrics: Record<string, number>, status?: DeviceStatus) => number; updateLinkTelemetry: (linkId: string, status: LinkStatus, active?: boolean) => number } } }
 window.stationPrototype = {
   graph, snapshot, setDataMode, getDataMode: () => telemetry.mode,
+  updateLinkTelemetry(linkId, status, active) {
+    const checked = parseLinkData({ [linkId]: { status, ...(active === undefined ? {} : { active }) } });
+    const edge = graph.getCellById(linkId);
+    if (!edge?.isEdge()) return 0;
+    const changed = telemetry.setMode('external');
+    if (changed) { paused = false; linkData = {}; resetOutage(); }
+    linkData = { ...linkData, ...checked };
+    lastUpdate = new Date(); updateRuntime(); syncDataControls();
+    if (changed) { renderSidebar(); if (mode === 'monitor') renderInspector(); }
+    return 1;
+  },
   updateTelemetry(deviceId, metrics, status) {
     const nodes = deviceNodes().filter((n) => n.getData<DeviceData>().deviceId === deviceId);
     const previousMode = telemetry.mode;
     const count = telemetry.update(nodes.map((node) => node.id), metrics, status);
     if (!count) return 0;
-    if (previousMode !== telemetry.mode) { paused = false; resetOutage(); }
+    if (previousMode !== telemetry.mode) { paused = false; linkData = {}; resetOutage(); }
     nodes.forEach((node) => telemetry.recordHistory(node.id, devices[node.getData<DeviceData>().kind].metrics[0]?.key, runtimeStatus(node)));
     lastUpdate = new Date(); updateRuntime(); syncDataControls();
     if (previousMode !== telemetry.mode) { renderSidebar(); if (mode === 'monitor') renderInspector(); }

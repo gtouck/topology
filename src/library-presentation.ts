@@ -3,6 +3,7 @@ import { deviceGeometry, linkTypes } from './topology';
 import { escapeHtml as esc } from './icons';
 import { drawingOrder } from './diagram';
 import { diagramSvg } from './diagram-svg';
+import { resolveLinkState } from './link-state';
 
 export type LibrarySort = 'modified' | 'name';
 export const categoryLabel = (category: string) => categories[category as keyof typeof categories] || category;
@@ -37,6 +38,10 @@ export function documentThumbnail(document: TopologyDocument): string {
   const isGroup = (id: string) => document.topology.elements?.some((element) => element.id === id && element.kind === 'group');
   const regions = order.filter(isGroup).map((id) => drawing.get(id)).join('');
   const foreground = order.filter((id) => !isGroup(id)).map((id) => cards.get(id) || drawing.get(id)).join('');
-  const edges = document.topology.edges.map((edge) => `<polyline data-thumbnail-edge="${esc(edge.id)}" points="${[endpoint(edge.source), ...edge.vertices, endpoint(edge.target)].map((point) => `${point.x},${point.y}`).join(' ')}" fill="none" stroke="${esc(edge.appearance?.color || linkTypes[edge.kind].color)}" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>`).join('');
+  const edges = document.topology.edges.map((edge) => {
+    const state = resolveLinkState(edge, [edge.source, edge.target].map(end => ({ status: map.get(end.cell)!.data.status })));
+    const color = state.status === 'down' ? '#aeb8b3' : state.status === 'unknown' ? '#bdc8d1' : edge.appearance?.color || linkTypes[edge.kind].color;
+    return `<polyline data-thumbnail-edge="${esc(edge.id)}" data-link-status="${state.status}" points="${[endpoint(edge.source), ...edge.vertices, endpoint(edge.target)].map((point) => `${point.x},${point.y}`).join(' ')}" fill="none" stroke="${esc(color)}" stroke-width="4" ${state.status === 'down' ? 'stroke-dasharray="6 5"' : ''} stroke-linecap="round" stroke-linejoin="round"/>`;
+  }).join('');
   return `<svg class="document-thumbnail" viewBox="${left} ${top} ${width} ${height}" role="img" aria-label="${esc(document.name)} · ${nodes.length} 个节点的布局缩略图">${regions}${edges}${foreground}</svg>`;
 }

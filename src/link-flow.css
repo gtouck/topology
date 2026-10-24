@@ -1,0 +1,8 @@
+@keyframes topology-cable-flow{from{stroke-dashoffset:0}to{stroke-dashoffset:var(--cable-flow-end)}}
+#graph .cable-flow,.topology-viewer .cable-flow{display:none;pointer-events:none}
+#graph .x6-edge[data-link-playing="true"]:not([data-cable-style="double"]) .cable-flow-inner,.topology-viewer .x6-edge[data-link-playing="true"]:not([data-cable-style="double"]) .cable-flow-inner,
+#graph .x6-edge[data-link-playing="true"][data-cable-style="double"] .cable-flow-outer,.topology-viewer .x6-edge[data-link-playing="true"][data-cable-style="double"] .cable-flow-outer{display:block;animation:topology-cable-flow var(--cable-flow-duration) linear infinite}
+#graph .x6-edge[data-flow-direction="forward"] .cable-flow-reverse,.topology-viewer .x6-edge[data-flow-direction="forward"] .cable-flow-reverse,
+#graph .x6-edge[data-flow-direction="reverse"] .cable-flow-forward,.topology-viewer .x6-edge[data-flow-direction="reverse"] .cable-flow-forward{display:none!important}
+#graph .cable-flow-reverse,.topology-viewer .cable-flow-reverse{animation-direction:reverse!important;animation-delay:calc(var(--cable-flow-duration) * -.5)!important}
+@media(prefers-reduced-motion:reduce){#graph .cable-flow,.topology-viewer .cable-flow{display:none!important;animation:none!important}}

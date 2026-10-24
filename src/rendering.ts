@@ -46,7 +46,10 @@ export function registerTopologyShapes() {
   });
   Graph.registerEdge('station-cable', {
     inherit: 'edge',
-    markup: ['wrap', 'line', 'core', 'texture', 'shine', 'direction'].map((selector) => ({ tagName: 'path', selector, groupSelector: 'lines', className: `cable-${selector}` })),
+    markup: [
+      ...['wrap', 'line', 'flowOuterForward', 'flowOuterReverse', 'core', 'texture', 'shine', 'flowForward', 'flowReverse', 'direction'].map((selector) => ({ tagName: 'path', selector, groupSelector: 'lines', className: selector.startsWith('flow') ? `cable-flow cable-flow-${selector.includes('Outer') ? 'outer' : 'inner'} cable-flow-${selector.endsWith('Forward') ? 'forward' : 'reverse'}` : `cable-${selector}` })),
+      { tagName: 'title', selector: 'statusTitle' },
+    ],
     attrs: {
       lines: { connection: true, fill: 'none', strokeLinejoin: 'round', strokeLinecap: 'round', pointerEvents: 'none' },
       wrap: { stroke: 'transparent', strokeWidth: 16, pointerEvents: 'stroke', cursor: 'pointer' },

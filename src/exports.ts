@@ -3,6 +3,7 @@ import type { TopologyDocument } from './document';
 import { renderTopologySvg, type ExportState, type ExportEdgeGeometry, type SvgExport } from './export-svg';
 import { renderTopologyHtml } from './export-html';
 import runtimeUrl from '../dist-viewer/topology-viewer.umd.js?url';
+import type { LinkTelemetryData } from './link-state';
 
 export function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -15,7 +16,7 @@ export function exportFilename(name: string, extension: string) {
   return `${name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '-').replace(/[. ]+$/g, '').trim() || 'topology'}.${extension}`;
 }
 
-export function graphSvg(graph: Graph, definition: TopologyDocument, state: ExportState) {
+export function graphSvg(graph: Graph, definition: TopologyDocument, state: ExportState, linkData: LinkTelemetryData = {}) {
   const paths: Record<string, ExportEdgeGeometry> = {};
   for (const edge of graph.getEdges()) {
     const line = graph.findViewByCell(edge)?.container.querySelector<SVGPathElement>('.cable-line');
@@ -25,7 +26,7 @@ export function graphSvg(graph: Graph, definition: TopologyDocument, state: Expo
       paths[edge.id] = { path, label: { x: middle.x, y: middle.y } };
     }
   }
-  return renderTopologySvg(definition, state, paths);
+  return renderTopologySvg(definition, state, paths, linkData);
 }
 
 export async function svgToPng(image: SvgExport, requestedScale = 2): Promise<Blob> {
@@ -49,10 +50,10 @@ export async function svgToPng(image: SvgExport, requestedScale = 2): Promise<Bl
 }
 
 let runtimePromise: Promise<string> | undefined;
-export async function standaloneHtml(definition: TopologyDocument, state: ExportState) {
+export async function standaloneHtml(definition: TopologyDocument, state: ExportState, linkData?: LinkTelemetryData) {
   runtimePromise ??= fetch(runtimeUrl).then((response) => {
     if (!response.ok) throw new Error('展示组件加载失败，请刷新页面后重试');
     return response.text();
   }).catch((error) => { runtimePromise = undefined; throw error; });
-  return renderTopologyHtml(definition, state, await runtimePromise);
+  return renderTopologyHtml(definition, state, await runtimePromise, linkData);
 }

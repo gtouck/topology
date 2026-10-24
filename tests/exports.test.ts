@@ -112,7 +112,7 @@ describe('图片与独立 HTML 导出', () => {
     const html = renderTopologyHtml(doc, snapshot(doc), 'window.TopologyKit = {}; /* </script> */');
     expect(html).not.toMatch(/<script\s+src=|<link\b|<iframe\b/);
     expect(html).toContain('window.topologyViewer = viewer');
-    expect(html).toContain("['setData', 'updateData']");
+    expect(html).toContain("['setData', 'updateData', 'setLinkData', 'updateLinkData']");
     expect(html).toContain('topology:node-click');
     expect(html).not.toContain('<script>window.pwned');
     expect(html).toContain('<\\/script>');

@@ -544,6 +544,16 @@
         },
         "appearance": {
           "$ref": "#/$defs/appearance"
+        },
+        "status": {
+          "enum": [
+            "up",
+            "down",
+            "unknown"
+          ]
+        },
+        "flow": {
+          "$ref": "#/$defs/linkFlow"
         }
       },
       "required": [
@@ -817,6 +827,34 @@
           "additionalProperties": false
         }
       ]
+    },
+    "linkFlow": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "direction": {
+          "enum": [
+            "forward",
+            "reverse",
+            "both"
+          ]
+        },
+        "speed": {
+          "enum": [
+            "slow",
+            "normal",
+            "fast"
+          ]
+        }
+      },
+      "required": [
+        "enabled",
+        "direction",
+        "speed"
+      ],
+      "additionalProperties": false
     }
   }
 }

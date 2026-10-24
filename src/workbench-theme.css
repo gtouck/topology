@@ -174,3 +174,9 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,su
 /* Status badges retain node semantics inside otherwise neutral tool panels. */
 .inspector .status-pill[data-status]{color:var(--device-state-color);background:var(--device-state-background);border:1px solid var(--device-state-border)}
 .empty-shortcuts>span,.small-kicker{color:#8191a9}
+
+.link-status-badge{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border:1px solid #bbd8cc;border-radius:4px;background:#eef7f1;color:#46856c;font-size:11px;margin-top:10px}
+.link-status-badge[data-link-status="down"]{color:#788694;background:#eef1f5;border-color:#c9d1da}
+.link-status-badge[data-link-status="unknown"]{color:#7089ab;background:#edf3fb;border-color:#c7d6e9}
+.link-state-controls{margin-top:18px;padding-top:16px;border-top:1px solid var(--ui-border,#e1e7ef)}
+.link-state-controls .field{margin-top:12px}.link-id{font:10px/1.8 monospace;overflow-wrap:anywhere;user-select:text;color:#64748b;margin-top:9px}

@@ -64,25 +64,29 @@ viewer.destroy();
 ```tsx
 import { useEffect, useRef } from 'react';
 import { TopologyViewer } from '@topology-kit/viewer';
-import type { TopologyDocument, TelemetryData } from '@topology-kit/viewer';
+import type { TopologyDocument, TelemetryData, LinkTelemetryData } from '@topology-kit/viewer';
 
-export function TopologyPanel({ definition, data }: {
+export function TopologyPanel({ definition, data, linkData }: {
   definition: TopologyDocument;
   data: TelemetryData;
+  linkData: LinkTelemetryData;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const controller = useRef<TopologyViewer | null>(null);
   const latestData = useRef(data);
   latestData.current = data;
+  const latestLinks = useRef(linkData);
+  latestLinks.current = linkData;
 
   useEffect(() => {
-    const viewer = new TopologyViewer(container.current!, { definition });
+    const viewer = new TopologyViewer(container.current!, { definition, linkData: latestLinks.current });
     controller.current = viewer;
     viewer.setData(latestData.current);
     return () => { viewer.destroy(); controller.current = null; };
   }, [definition]);
 
   useEffect(() => { controller.current?.setData(data); }, [data]);
+  useEffect(() => { controller.current?.setLinkData(linkData); }, [linkData]);
   return <div ref={container} style={{ height: 500 }} />;
 }
 ```
@@ -104,11 +108,60 @@ export function TopologyPanel({ definition, data }: {
 
 左侧字段名必须存在于节点模板的参数定义中。右侧支持点分隔对象路径，不执行表达式或 JavaScript。状态使用 `normal / warning / offline`，业务状态可显式映射。未提供映射时，可直接使用这三个状态值。
 
-没有接收到节点的数据时显示“等待数据”和 `—`，不产生演示值。离线节点参数显示 `—`，关联线缆变灰分段。恢复数据后还原文件中配置的线缆外观。更新数据不重新布局、不修改手工拐点。
+没有接收到节点的数据时显示“等待数据”和 `—`，不产生演示值。离线节点参数显示 `—`，关联线缆变灰分段。恢复节点后按独立链路状态恢复外观及流转；尚无链路数据时保持未知。更新数据不重新布局、不修改手工拐点。
+
+## 链路状态与流转（0.3.0）
+
+制作工具选中连线可查看链路 ID，并编辑初始状态、动效开关、方向和速度。链路状态为 `up / down / unknown`，与设备状态分开。正向沿 source → target，反向沿 target → source，双向分别播放；流转方向与方向箭头分别配置。
+
+```ts
+const viewer = new TopologyViewer(container, {
+  definition,
+  linkData: { 'link-rx-rf': { status: 'up' } },
+  animations: true, // false 整体关闭此实例的流转动画
+});
+viewer.setLinkData({
+  'link-rx-rf': { status: 'up' },
+  'link-server': { status: 'down' },
+});
+viewer.updateLinkData({ 'link-rx-rf': { active: false } }); // 连通空闲，原色静止
+viewer.updateLinkData({ 'link-rx-rf': { status: 'up', active: true } });
+viewer.updateLinkData({ 'link-rx-rf': { status: 'down' } }); // 置灰、分段、停止
+viewer.setLinkData({}); // 清空，恢复未知
+```
+
+- 按 `topology.edges[].id` 匹配，可从 `getDefinition()` 读取。复制连线生成新 ID，宿主需重新关联。
+- `setLinkData` 替换全部链路数据；`updateLinkData` 按链路合并，可只提供 status 或 active。初次只提供 active 时状态为未知。非法批量更新整体拒绝。
+- 设备与链路两类运行数据互不清空；`setDefinition` 清空两类数据。运行值不写入文档或撤销历史。
+- 端点设备**明确离线**时链路优先断开，否则采用宿主链路状态。等待端点数据不等于端点明确离线，允许宿主先报告链路连通。
+- 尚无链路记录时为未知、静止并淡化。`active` 默认为 true，仅在连通时有效；宿主可用它表示实际有无流量，组件不自行检测流量或连接采集服务。
+
+制作工具模拟模式采用初始状态，查看时播放，编辑画布静态。链路详情支持模拟断开/连通，不改存档。宿主模式尚无链路数据时为未知；验证接口：
+
+```js
+window.stationPrototype.updateLinkTelemetry('link-rx-rf', 'up');
+window.stationPrototype.updateLinkTelemetry('link-rx-rf', 'up', false);
+window.stationPrototype.updateLinkTelemetry('link-rx-rf', 'down');
+```
+
+已存在链路自动进入宿主模式并返回 1；未知 ID 返回 0，不切换模式。参数先校验，非法输入不部分写入。运行值跨模拟周期及撤销保留；切图、刷新或主动切换数据模式后需重新发送。
+
+v3 连线增加两个可选字段：
+
+```json
+{
+  "status": "up",
+  "flow": { "enabled": true, "direction": "forward", "speed": "normal" }
+}
+```
+
+`status` 为初始状态；方向为 `forward / reverse / both`，速度为 `slow / normal / fast`。旧文件缺省为连通、开启动效、正向、标准速度，读取时不自动补写字段；Schema、迁移、复制、保存及撤销均支持。新字段及 API 需要 `0.3.0` 组件，制作和展示端应配套升级。**从 0.2.x 升级后，宿主需单独提供链路状态**，设备在线不自动表示链路连通。
+
+高光沿手工路径流动，外皮和编织纹理固定，双线保留中心间隙。系统“减少动态效果”偏好停止播放；宿主也可用 `animations: false` 关闭单实例动画。PNG/SVG 保留静态状态，HTML 保留流转配置、状态快照和相同 API，可在页面调用 `window.topologyViewer.updateLinkData(...)`，同源 iframe 调用方式与设备 API 相同。
 
 ## 状态外观
 
-`0.2.1` 组件将正常、告警、离线和等待分别以绿色勾选、琥珀色提示、灰色虚线断连、蓝色点线时钟呈现。节点尺寸和端口位置不因状态变化而改变，参数更新不修改定义。
+组件将正常、告警、离线和等待分别以绿色勾选、琥珀色提示、灰色虚线断连、蓝色点线时钟呈现。节点尺寸和端口位置不因状态变化而改变，参数更新不修改定义。
 
 文件与宿主 API 仍只接受 `normal / warning / offline`。等待由绑定源尚未收到数据推导；清空数据时恢复等待，收到离线记录时显示真正离线。DOM 的 `data-status` 可为 `pending`，它是呈现标记，不是文件中的状态值。制作工具属性栏的“初始状态”设置默认值，宿主记录可以覆盖运行状态。
 
@@ -130,7 +183,7 @@ export function TopologyPanel({ definition, data }: {
 
 ## v3 图面元素与兼容性
 
-组件包版本为 `0.2.1`，包的 `./schema` 指向 v3，`./schema/v2` 保留旧 Schema。`0.1.x` 组件不支持 v3，需配套更新，不能只将文件的版本号改回 2，否则会丢失图面内容。
+组件包版本为 `0.3.0`，包的 `./schema` 指向包含链路状态/流转扩展的 v3，`./schema/v2` 保留旧 Schema。`0.1.x` 组件不支持 v3，需配套更新，不能只将文件的版本号改回 2，否则会丢失图面内容。
 
 `topology.elements` 是可选数组，最多 100 项，元素公共字段为 `id`、`kind`、`x`、`y`、`width`、`height`、`title`、`color` 及可选 `locked`。宽度 160–10000、高度 80–10000 px，坐标范围与节点一致。三种类型：
 

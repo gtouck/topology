@@ -10,7 +10,7 @@ function patchDeclarations(directory: string) {
 }
 patchDeclarations('dist-viewer/types');
 writeFileSync('dist-viewer/package.json', JSON.stringify({
-  name: '@topology-kit/viewer', version: '0.2.1', private: true, type: 'module',
+  name: '@topology-kit/viewer', version: '0.3.0', private: true, type: 'module',
   module: './topology-viewer.js', types: './types/viewer-index.d.ts', unpkg: './topology-viewer.umd.js',
   exports: { '.': { types: './types/viewer-index.d.ts', import: './topology-viewer.js', default: './topology-viewer.js' }, './schema': './topology-v3.schema.json', './schema/v2': './topology-v2.schema.json' },
 }, null, 2));

@@ -8,10 +8,12 @@ import assert from 'node:assert/strict';
 if (process.platform !== 'darwin') throw new Error('实际 Safari 检查需要 macOS 和 Safari 27 或更新版本');
 const root = resolve('dist'), output = resolve('test-results/safari');
 let screenshotBytes: Uint8Array | undefined;
+const motionShots = new Map<string, Uint8Array>();
 await mkdir(output, { recursive: true });
 await readFile(resolve(root, 'index.html'));
 const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
   const pathname = new URL(request.url).pathname;
+  if (motionShots.has(pathname)) return new Response(motionShots.get(pathname), { headers: { 'Content-Type': 'image/png' } });
   if (pathname === '/__safari-check.png') return screenshotBytes ? new Response(screenshotBytes, { headers: { 'Content-Type': 'image/png' } }) : new Response(null, { status: 404 });
   const path = resolve(root, '.' + (pathname === '/' ? '/index.html' : decodeURIComponent(pathname)));
   if (!path.startsWith(root + sep)) return new Response(null, { status: 403 });
@@ -108,6 +110,39 @@ try {
   await paint('locked');
   await evaluate(`document.querySelector('[data-action="unlock-selected"]').click();if(JSON.stringify(window.stationPrototype.snapshot())!==window.__compatSnapshot)throw new Error('解锁后文档改变');document.querySelector('[data-action="save"]').click();`, 'save and unchanged geometry');
   await evaluate(`
+    document.querySelector('.mode-switch [data-action="monitor"]').click();
+    window.stationPrototype.updateLinkTelemetry('link-rx-rf','up');
+    const edge=document.querySelector('.x6-edge[data-cell-id="link-rx-rf"]'),flow=edge.querySelector('.cable-flow-inner.cable-flow-forward');
+    if(edge.dataset.linkStatus!=='up'||flow.getAttribute('d')!==edge.querySelector('.cable-line').getAttribute('d'))throw new Error('链路状态或路径未同步');
+    window.__compatFlowOffset=getComputedStyle(flow).strokeDashoffset;
+  `, 'link animation setup');
+  await tool('page_interactions', { interactions: [{ type: 'click', text: '拓扑查看', purpose: '激活本次测试页面并观察链路动画' }] });
+  // Read actual pixels: native Safari may return the base SVG value from computed style.
+  await tool('screenshot', { savePath: resolve(output, 'flow-first.png'), full_page: true });
+  motionShots.set('/__flow-first.png', await readFile(resolve(output, 'flow-first.png')));
+  await new Promise(resolve => setTimeout(resolve, 350));
+  await tool('screenshot', { savePath: resolve(output, 'flow-second.png'), full_page: true });
+  motionShots.set('/__flow-second.png', await readFile(resolve(output, 'flow-second.png')));
+  await evaluate(`
+    const edge=document.querySelector('.x6-edge[data-cell-id="link-rx-rf"]'),flow=edge.querySelector('.cable-flow-inner.cable-flow-forward');
+    if(document.hidden)window.__compatMotionPending=true;
+    else if(!matchMedia('(prefers-reduced-motion:reduce)').matches){
+      const line=edge.querySelector('.cable-line'),length=line.getTotalLength(),matrix=line.getScreenCTM(),bounds=document.querySelector('#graph').getBoundingClientRect();
+      const points=Array.from({length:80},(_,i)=>.1+i/100).filter(t=>Math.abs(t-.5)>.08).map(t=>line.getPointAtLength(length*t).matrixTransform(matrix)).filter(p=>p.x>bounds.left&&p.x<bounds.right&&p.y>bounds.top&&p.y<bounds.bottom);
+      async function pixels(src){const image=new Image(),ready=new Promise((resolve,reject)=>{image.onload=resolve;image.onerror=reject});image.src=src;await ready;const canvas=document.createElement('canvas');canvas.width=image.width;canvas.height=image.height;const ctx=canvas.getContext('2d');ctx.drawImage(image,0,0);const ratio=image.width/innerWidth;return points.map(p=>Array.from(ctx.getImageData(Math.round(p.x*ratio),Math.round(p.y*ratio),1,1).data));}
+      const first=await pixels('/__flow-first.png'),second=await pixels('/__flow-second.png');
+      const changed=first.filter((pixel,i)=>pixel.some((value,j)=>Math.abs(value-second[i][j])>15)).length;
+      if(!changed)throw new Error('实际链路像素未移动：'+JSON.stringify({visibility:document.visibilityState,focus:document.hasFocus(),now:performance.now(),documentTime:document.timeline.currentTime,display:getComputedStyle(flow).display,animation:getComputedStyle(flow).animationName,duration:getComputedStyle(flow).animationDuration,play:getComputedStyle(flow).animationPlayState,offset:getComputedStyle(flow).strokeDashoffset,end:getComputedStyle(flow).getPropertyValue('--cable-flow-end'),durationVariable:getComputedStyle(flow).getPropertyValue('--cable-flow-duration'),animations:flow.getAnimations().map(a=>({time:a.currentTime,start:a.startTime,pending:a.pending,play:a.playState,timeline:a.timeline?.currentTime})),points:points.length}));
+    }
+    window.stationPrototype.updateLinkTelemetry('link-rx-rf','down');if(edge.dataset.linkPlaying!=='false'||edge.dataset.linkStatus!=='down')throw new Error('断开后未停止动效');
+    window.stationPrototype.updateLinkTelemetry('link-rx-rf','up',false);if(edge.dataset.linkPlaying!=='false'||edge.dataset.linkStatus!=='up')throw new Error('连通空闲错误');
+    window.stationPrototype.updateLinkTelemetry('link-rx-rf','up');
+    if(JSON.stringify(window.stationPrototype.snapshot())!==window.__compatSnapshot)throw new Error('链路运行数据污染了文档');
+  `, 'link disconnection and idle state');
+  const motionResult = await tool('evaluate_javascript', { expression: "return window.__compatMotionPending?'PENDING foreground cable motion':'VERIFIED cable motion';" });
+  const motionPending = JSON.stringify(motionResult).includes('PENDING');
+  if (motionPending) console.log('PENDING: Safari inspection tab is hidden; foreground cable animation needs a visible browser check.');
+  await evaluate(`
     const original=HTMLAnchorElement.prototype.click;let download;
     HTMLAnchorElement.prototype.click=function(){if(this.download)download=this.href;else original.call(this)};
     async function capture(format){
@@ -135,6 +170,8 @@ try {
         const viewer=frame.contentWindow.topologyViewer;if(!viewer||frame.contentDocument.querySelectorAll('.device-card').length!==8)throw new Error('HTML 展示组件未加载');
         const node=viewer.getDefinition().topology.nodes[0];viewer.updateData({[node.data.binding?.source||node.data.deviceId]:{status:'offline'}});
         if(!frame.contentDocument.querySelector('.device-card[data-status="offline"]'))throw new Error('HTML 宿主更新失败');
+        const link=viewer.getDefinition().topology.edges[0];viewer.updateLinkData({[link.id]:{status:'down'}});
+        if(frame.contentDocument.querySelector('.x6-edge[data-cell-id="'+link.id+'"]').dataset.linkStatus!=='down')throw new Error('HTML 链路更新失败');
         viewer.destroy();
       }finally{frame.remove()}
       if(window.__compatErrors.length)throw new Error(window.__compatErrors.join(';'));
@@ -143,7 +180,8 @@ try {
   `, 'SVG content, decoded PNG and self-contained HTML');
   await tool('navigate_to_url', { tab_uuid: tab, url: origin + '/viewer.html' });
   await evaluate(`if(!window.topologyViewer||!document.querySelectorAll('.device-card').length)throw new Error('展示组件未加载');const node=window.topologyViewer.getDefinition().topology.nodes[0];window.topologyViewer.updateData({[node.data.binding?.source||node.data.deviceId]:{status:'warning'}});if(!document.querySelector('.device-card[data-status="warning"]'))throw new Error('展示组件状态未更新');`, 'standalone viewer');
-  console.log('Safari native checks passed. Screenshots: ' + output);
+  console.log('Safari native functional checks passed. Screenshots: ' + output);
+  if (motionPending) process.exitCode = 2;
 } finally {
   if (tab) await tool('close_tab', { handle: tab }).catch(() => {});
   child.kill(); server.stop(true);

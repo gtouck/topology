@@ -1,5 +1,6 @@
 import type { IconName } from './icons';
 import { parseCableAppearance, type CableAppearance } from './cables';
+import { parseLinkStatus, parseLinkFlow, type LinkStatus, type LinkFlow } from './link-state';
 import type { DiagramElement } from './diagram';
 
 export type DeviceKind = string;
@@ -11,7 +12,7 @@ export interface DeviceData { kind: DeviceKind; title: string; deviceId: string;
 export interface PortDefinition { id: string; label: string; kind: LinkKind; side: 'left' | 'right' | 'top' | 'bottom'; offset?: number }
 export interface DeviceDefinition { label: string; en: string; icon: IconName; model: string; metrics: MetricDefinition[]; ports: PortDefinition[] }
 export interface DeviceRecord { id: string; x: number; y: number; data: DeviceData }
-export interface LinkRecord { id: string; source: { cell: string; port: string }; target: { cell: string; port: string }; kind: LinkKind; label: string; vertices: { x: number; y: number }[]; appearance?: CableAppearance }
+export interface LinkRecord { id: string; source: { cell: string; port: string }; target: { cell: string; port: string }; kind: LinkKind; label: string; vertices: { x: number; y: number }[]; appearance?: CableAppearance; status?: LinkStatus; flow?: LinkFlow }
 export interface Snapshot { nodes: DeviceRecord[]; edges: LinkRecord[]; elements?: DiagramElement[]; order?: string[] }
 export interface TopologyFile { version: 1; name: string; savedAt: string; topology: Snapshot }
 
@@ -208,7 +209,7 @@ export function parseTopologyFile(input: unknown, definitions = devices): Topolo
     };
     const source = endpoint(e.source), target = endpoint(e.target);
     if (source.cell === target.cell) throw new Error('不支持设备连接到自身');
-    return { id, source, target, kind: e.kind, label: typeof e.label === 'string' ? e.label.slice(0, 80) : '', vertices: e.vertices.map((p) => ({ x: coord(p.x), y: coord(p.y) })), ...(e.appearance === undefined ? {} : { appearance: parseCableAppearance(e.appearance) }) };
+    return { id, source, target, kind: e.kind, label: typeof e.label === 'string' ? e.label.slice(0, 80) : '', vertices: e.vertices.map((p) => ({ x: coord(p.x), y: coord(p.y) })), ...(e.appearance === undefined ? {} : { appearance: parseCableAppearance(e.appearance) }), ...(e.status === undefined ? {} : { status: parseLinkStatus(e.status) }), ...(e.flow === undefined ? {} : { flow: parseLinkFlow(e.flow) }) };
   });
   return { version: 1, name: typeof file.name === 'string' ? file.name.slice(0, 100) : '站点拓扑', savedAt: typeof file.savedAt === 'string' ? file.savedAt : '', topology: { nodes, edges } };
 }

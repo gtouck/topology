@@ -1,4 +1,5 @@
 import type { LinkKind } from './topology';
+import type { FlowSpeed } from './link-state';
 
 export type CableStyle = 'solid' | 'dashed' | 'double' | 'jacket' | 'braided';
 export interface CableAppearance { style: CableStyle; width: number; color: string; arrows: boolean }
@@ -38,9 +39,9 @@ function mix(color: string, amount: number) {
 }
 
 // Every layer follows the same X6 connection path, including all manually edited vertices.
-export function cableAttributes(appearance: CableAppearance, offline = false, textureId = 'station-cable-braid') {
+export function cableAttributes(appearance: CableAppearance, offline = false, textureId = 'station-cable-braid', unknown = false) {
   const { style, width, arrows } = appearance;
-  const color = offline ? '#aeb8b3' : appearance.color;
+  const color = offline ? '#aeb8b3' : unknown ? mix(appearance.color, .55) : appearance.color;
   const physical = style === 'jacket' || style === 'braided';
   const double = style === 'double';
   const dash = offline ? '6 5' : style === 'dashed' ? `${Math.max(6, width * 2)} ${Math.max(4, width * 1.3)}` : '';
@@ -52,6 +53,17 @@ export function cableAttributes(appearance: CableAppearance, offline = false, te
     shine: { stroke: mix(color, .65), strokeWidth: Math.max(.5, width * .18), strokeDasharray: dash, opacity: physical ? .65 : 0 },
     direction: { opacity: arrows ? 1 : 0, targetMarker: arrows ? { name: 'block', width: 7, height: 6, fill: color, stroke: color } : null },
   };
+}
+
+/** Moving highlights sit above the jacket; the double-line core covers outer highlights. */
+export function cableFlowAttributes(appearance: CableAppearance, speed: FlowSpeed = 'normal') {
+  const physical = appearance.style === 'jacket' || appearance.style === 'braided';
+  const dash = physical ? Math.max(12, appearance.width * 2) : appearance.style === 'dashed' ? 5 : 2;
+  const gap = physical ? 74 : 30, period = dash + gap;
+  const base = { stroke: mix(appearance.color, .82), strokeDasharray: `${dash} ${gap}`, opacity: .95 };
+  const inner = { ...base, strokeWidth: physical ? Math.max(.8, appearance.width * .32) : Math.max(1, appearance.width * .6) };
+  const outer = { ...base, strokeWidth: appearance.width };
+  return { period, duration: period / ({ slow: 24, normal: 48, fast: 96 }[speed]), attrs: { flowForward: inner, flowReverse: inner, flowOuterForward: outer, flowOuterReverse: outer } };
 }
 
 export function cablePreview(appearance: CableAppearance) {

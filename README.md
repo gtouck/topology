@@ -144,7 +144,7 @@ bun run deploy
 
 图面操作均可一步撤销。查看模式和独立展示隐藏编辑手柄，图面元素不计入业务节点数及参数采样。只包含注释的图也可导出 PNG、SVG 和离线 HTML。
 
-文件升级为 Topology v3；旧 v1/v2 可导入，新文件需使用支持 v3 的制作工具和 `0.2.1` 展示组件。旧版 Schema 保留在 `schema/topology-v2.schema.json`，不可仅降低版本号来使用新文件。
+文件升级为 Topology v3；旧 v1/v2 可导入，新文件需使用支持 v3 的制作工具和 `0.3.0` 展示组件。旧版 Schema 保留在 `schema/topology-v2.schema.json`，不可仅降低版本号来使用新文件。
 
 ## 文件格式与旧数据
 
@@ -185,6 +185,14 @@ bun run build
 HTML 默认展示导出时的模拟数据快照，没有自动采集或刷新计时器。宿主通过导出页面的 `window.topologyViewer.setData(data)` / `updateData(patch)` 更新数据，按文档中的业务对象 ID、字段绑定提供数据。完整示例见 [HTML 接入说明](docs/integration.md#独立-html-文件)。
 
 `bun run dev` 和 `bun run build` 会先生成独立展示包，用于 HTML 导出。展示组件源码修改后需重启开发服务，以刷新导出时内嵌的运行时。
+
+## 链路状态与流转
+
+选择连线，在编辑属性中设置初始状态（连通、断开、未知）、流转开关、正向/反向/双向及速度；切换查看模式播放。详情中的模拟断开/连通可快速检查效果，不写入存档。动效沿原有路径播放，保留材质、纹理和拐点；PNG/SVG 是静态快照，HTML 保留动态展示。
+
+独立展示组件的 `setLinkData` / `updateLinkData` 按链路 ID 接收 `up / down / unknown`；连通时 `active: false` 表示空闲。明确离线的端点优先使链路断开；没有链路数据时保持未知。设备数据和链路数据分开更新，宿主需独立提供链路状态，详见 [链路接入说明](docs/integration.md)。组件 `animations: false` 或系统“减少动态效果”可关闭播放。
+
+独立验证页 `/viewer.html` 提供设备与链路两份 JSON；“填入示例数据”同时准备两者，再点击“更新数据”查看流转效果。
 
 ## 验证
 
