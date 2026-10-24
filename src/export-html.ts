@@ -3,6 +3,7 @@ import type { ExportState } from './export-svg';
 import type { TelemetryData } from './runtime-data';
 import { escapeHtml as esc } from './icons';
 import { parseLinkData, resolveLinkState, type LinkTelemetryData } from './link-state';
+import type { FreshnessSnapshot, RuntimeDataStatus } from './data-freshness';
 
 /** JSON is embedded as data, never as an executable expression. */
 export function scriptJson(value: unknown) {
@@ -49,14 +50,16 @@ export function exportTelemetry(document: TopologyDocument, state: ExportState) 
 }
 
 /** One file, including its viewer runtime: no server or network needed to open it. */
-export function renderTopologyHtml(document: TopologyDocument, state: ExportState, runtime: string, linkData?: LinkTelemetryData) {
+export function renderTopologyHtml(document: TopologyDocument, state: ExportState, runtime: string, linkData?: LinkTelemetryData, dataStatus?: RuntimeDataStatus) {
   if (!runtime.trim()) throw new Error('展示组件未生成，请重新运行 bun run dev 或 bun run build');
   const snapshot = exportTelemetry(document, state);
   const links = parseLinkData(linkData ?? Object.fromEntries(document.topology.edges.map(edge => {
-    const endpoints = [edge.source, edge.target].map(end => ({ status: state[end.cell]?.status || document.topology.nodes.find(node => node.id === end.cell)!.data.status, pending: state[end.cell]?.pending }));
+    const endpoints = [edge.source, edge.target].map(end => ({ status: state[end.cell]?.status || document.topology.nodes.find(node => node.id === end.cell)!.data.status, pending: state[end.cell]?.pending, stale: state[end.cell]?.freshness === 'stale' || state[end.cell]?.freshness === 'disconnected' }));
     const current = resolveLinkState(edge, endpoints);
-    return [edge.id, { status: current.status, active: current.active }];
+    return [edge.id, { status: current.status, ...(current.status === 'up' ? { active: current.active } : {}) }];
   })));
+  const nodes: FreshnessSnapshot = Object.fromEntries(document.topology.nodes.map(node => [node.id, { phase: state[node.id]?.freshness ?? (state[node.id]?.pending ? 'waiting' : 'snapshot'), receivedAt: state[node.id]?.receivedAt ?? null }]));
+  const snapshotState = { nodes, links: dataStatus?.links ?? {}, staleAfterMs: dataStatus?.staleAfterMs };
   const runtimeScript = runtime.replace(/<\/script/gi, '<\\/script');
   return `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(document.name)}</title>
@@ -65,14 +68,16 @@ export function renderTopologyHtml(document: TopologyDocument, state: ExportStat
 <script id="topology-document" type="application/json">${scriptJson(snapshot.definition)}</script>
 <script id="topology-data" type="application/json">${scriptJson(snapshot.data)}</script>
 <script id="topology-link-data" type="application/json">${scriptJson(links)}</script>
+<script id="topology-receive-state" type="application/json">${scriptJson(snapshotState)}</script>
 <script>${runtimeScript}</script>
 <script>
 try {
   const definition = JSON.parse(document.getElementById('topology-document').textContent);
   const data = JSON.parse(document.getElementById('topology-data').textContent);
   const linkData = JSON.parse(document.getElementById('topology-link-data').textContent);
+  const snapshotState = JSON.parse(document.getElementById('topology-receive-state').textContent);
   const viewer = new TopologyKit.TopologyViewer(document.getElementById('topology'), {
-    definition, data, linkData,
+    definition, data, linkData, snapshot: true, snapshotState, freshness: { staleAfterMs: snapshotState.staleAfterMs },
     onNodeClick(event) { window.dispatchEvent(new CustomEvent('topology:node-click', { detail: event })); }
   });
   for (const method of ['setData', 'updateData', 'setLinkData', 'updateLinkData']) {

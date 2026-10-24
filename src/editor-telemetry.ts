@@ -1,4 +1,5 @@
 import { statusLabels, type DeviceDefinition, type DeviceStatus, type MetricDefinition } from './topology';
+import { FreshnessTracker } from './data-freshness';
 
 export type EditorDataMode = 'simulation' | 'external';
 
@@ -12,10 +13,11 @@ export class EditorTelemetry {
   readonly values = new Map<string, Record<string, number>>();
   readonly statuses = new Map<string, DeviceStatus>();
   readonly history = new Map<string, number[]>();
+  readonly freshness = new FreshnessTracker();
 
   get mode() { return this.currentMode; }
 
-  clear() { this.values.clear(); this.statuses.clear(); this.history.clear(); }
+  clear() { this.values.clear(); this.statuses.clear(); this.history.clear(); this.freshness.clear(); }
 
   setMode(mode: EditorDataMode) {
     if (mode !== 'simulation' && mode !== 'external') throw new Error('数据模式不合法');
@@ -25,6 +27,7 @@ export class EditorTelemetry {
   }
 
   prune(ids: Set<string>) {
+    this.freshness.prune(ids);
     for (const map of [this.values, this.statuses, this.history]) {
       for (const id of map.keys()) if (!ids.has(id)) map.delete(id);
     }
@@ -47,12 +50,13 @@ export class EditorTelemetry {
   update(ids: string[], metrics: Record<string, number>, status?: DeviceStatus) {
     if (!metrics || typeof metrics !== 'object' || Array.isArray(metrics) || Object.values(metrics).some((v) => typeof v !== 'number' || !Number.isFinite(v))) throw new Error('设备参数必须是有限数值');
     if (status !== undefined && !Object.hasOwn(statusLabels, status)) throw new Error('设备状态不合法');
-    if (!ids.length) return 0;
+    if (!ids.length || (!Object.keys(metrics).length && status === undefined)) return 0;
     this.setMode('external');
     for (const id of ids) {
       this.values.set(id, { ...this.values.get(id), ...metrics });
       if (status !== undefined) this.statuses.set(id, status);
     }
+    this.freshness.receive(ids);
     return ids.length;
   }
 }

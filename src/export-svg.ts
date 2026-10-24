@@ -6,8 +6,9 @@ import { drawingOrder } from './diagram';
 import { diagramSvg } from './diagram-svg';
 import { nodeStatus, statusGlyph } from './node-status';
 import { resolveLinkState, type LinkTelemetryData } from './link-state';
+import type { FreshnessPhase } from './data-freshness';
 
-export interface ExportNodeState { status: DeviceStatus; values: Record<string, number>; label?: string; pending?: boolean }
+export interface ExportNodeState { status: DeviceStatus; values: Record<string, number>; label?: string; pending?: boolean; freshness?: FreshnessPhase; receivedAt?: number | null }
 export type ExportState = Record<string, ExportNodeState>;
 export interface Point { x: number; y: number }
 export interface ExportEdgeGeometry { path: string; label: Point }
@@ -77,7 +78,7 @@ export function renderTopologySvg(document: TopologyDocument, state: ExportState
     const current = renderedEdges[edge.id];
     const path = current?.path || roundedPath(points);
     const center = current?.label || midpoint(points);
-    const endpoints = [edge.source, edge.target].map(end => ({ status: state[end.cell]?.status || nodes.get(end.cell)!.data.status, pending: state[end.cell]?.pending }));
+    const endpoints = [edge.source, edge.target].map(end => ({ status: state[end.cell]?.status || nodes.get(end.cell)!.data.status, pending: state[end.cell]?.pending, stale: state[end.cell]?.freshness === 'stale' || state[end.cell]?.freshness === 'disconnected' }));
     const link = resolveLinkState(edge, endpoints, Object.hasOwn(linkData, edge.id) ? linkData[edge.id] : undefined);
     const offline = link.status === 'down';
     const appearance = cableAppearance(edge.kind, edge.appearance);
@@ -106,8 +107,8 @@ export function renderTopologySvg(document: TopologyDocument, state: ExportState
     bounds.push({ x: node.x, y: node.y }, { x: node.x + width, y: node.y + height });
     const def = definitions[node.data.kind], live = state[node.id];
     const status = live?.status || node.data.status;
-    const visual = nodeStatus(status, !!live?.pending, live?.label), pending = visual.tone === 'pending';
-    const offline = status === 'offline' || pending, warning = status === 'warning', disconnected = offline && !pending;
+    const visual = nodeStatus(status, !!live?.pending, live?.label, live?.freshness), pending = visual.tone === 'pending';
+    const offline = status === 'offline' || pending || live?.freshness === 'stale' || live?.freshness === 'disconnected', warning = status === 'warning', disconnected = offline && !pending;
     const border = visual.border, background = visual.surface;
     const title = fitText(node.data.title, width - 84, 12);
     const metrics = node.data.visibleMetrics.map((key, i, all) => {

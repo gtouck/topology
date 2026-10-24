@@ -12,3 +12,5 @@
 #graph .device-card[data-status="pending"] .device-glyph,.topology-viewer .device-card[data-status="pending"] .device-glyph{color:#7297bd;background:#edf4fb}
 #graph .device-card[data-status="pending"] .device-card-heading strong,.topology-viewer .device-card[data-status="pending"] .device-card-heading strong{color:#536c82}
 #graph .device-card[data-status].selected,.topology-viewer .device-card[data-status].selected{border-color:var(--device-state-color);box-shadow:0 0 0 2px #5277b32b,0 3px 10px #344a6310}
+#graph .device-card[data-status="stale"],.topology-viewer .device-card[data-status="stale"]{border-style:dashed}
+#graph .device-card[data-status="disconnected"],.topology-viewer .device-card[data-status="disconnected"]{border-style:dashed}

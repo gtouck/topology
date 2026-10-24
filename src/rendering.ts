@@ -2,12 +2,14 @@ import { Graph, Shape, type Node } from '@antv/x6';
 import { icon, escapeHtml as esc } from './icons';
 import { deviceGeometry, devicePorts, devices, linkTypes, statusLabels, type DeviceData, type DeviceDefinition, type DeviceRecord, type DeviceStatus } from './topology';
 import { updateNodeStatus } from './node-status-ui';
+import type { FreshnessPhase } from './data-freshness';
 
 export interface RenderContext {
   definitions: Record<string, DeviceDefinition>;
   editor?: boolean;
   status(node: Node): DeviceStatus;
   pending?(node: Node): boolean;
+  freshness?(node: Node): FreshnessPhase;
   value(node: Node, key: string): string;
   selected?(node: Node): boolean;
   locked?(node: Node): boolean;
@@ -40,7 +42,7 @@ export function registerTopologyShapes() {
         const value = ctx?.value(node, key) ?? '—';
         return `<div><span>${esc(metric.label)}</span><strong data-metric="${esc(key)}">${esc(value)}<small>${value === '—' ? '' : esc(metric.unit)}</small></strong></div>`;
       }).join('')}</div>` : ''}${ports.length > 8 ? `<div class="device-port-capacity"><strong>${ports.length}</strong><span>连接端口</span></div>` : ''}<div class="device-bottom"><span class="device-status-text">${esc(ctx?.statusLabel?.(node) || statusLabels[status])}</span><span>${esc(data.address || data.deviceId)}</span></div>`;
-      updateNodeStatus(el, status, ctx?.pending?.(node) || false, ctx?.statusLabel?.(node));
+      updateNodeStatus(el, status, ctx?.pending?.(node) || false, ctx?.statusLabel?.(node), ctx?.freshness?.(node));
       return el;
     },
   });

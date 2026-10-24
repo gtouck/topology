@@ -45,7 +45,7 @@ export function diagramSvg(element: DiagramElement, snapshot: Snapshot) {
   }
   if (element.showStatus) {
     y += 6;
-    const states: [NodeStatusTone, string][] = [['normal', '正常'], ['warning', '告警'], ['offline', '离线'], ['pending', '等待数据']];
+    const states: [NodeStatusTone, string][] = [['normal', '正常'], ['warning', '告警'], ['offline', '离线'], ['pending', '等待数据'], ['stale', '数据过期'], ['disconnected', '连接中断']];
     for (const [i, [tone, name]] of states.entries()) {
       const x = 16 + (i % 2) * (w - 28) / 2, row = y + Math.floor(i / 2) * 25;
       if (row <= h - 12) rows.push(`<g transform="translate(${x} ${row - 12})" color="${nodeStatusStyles[tone].color}">${statusGlyph(tone, 14)}</g>${label(name, x + 21, row, 11, '#526558', (w - 28) / 2 - 25)}`);

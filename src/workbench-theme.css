@@ -180,3 +180,4 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,su
 .link-status-badge[data-link-status="unknown"]{color:#7089ab;background:#edf3fb;border-color:#c7d6e9}
 .link-state-controls{margin-top:18px;padding-top:16px;border-top:1px solid var(--ui-border,#e1e7ef)}
 .link-state-controls .field{margin-top:12px}.link-id{font:10px/1.8 monospace;overflow-wrap:anywhere;user-select:text;color:#64748b;margin-top:9px}
+.runtime-received{font-size:10px;color:#8491a6;line-height:1.7;margin-top:9px;overflow-wrap:anywhere}

@@ -169,9 +169,9 @@ v3 连线增加两个可选字段：
 
 ## 状态外观
 
-组件将正常、告警、离线和等待分别以绿色勾选、琥珀色提示、灰色虚线断连、蓝色点线时钟呈现。节点尺寸和端口位置不因状态变化而改变，参数更新不修改定义。
+组件将正常、告警、离线和等待分别以绿色勾选、琥珀色提示、灰色虚线断连、蓝色点线时钟呈现；数据过期使用褐色虚线时钟，连接中断使用红褐色断连提示。节点尺寸和端口位置不因状态变化而改变，参数更新不修改定义。
 
-文件与宿主 API 仍只接受 `normal / warning / offline`。等待由绑定源尚未收到数据推导；清空数据时恢复等待，收到离线记录时显示真正离线。DOM 的 `data-status` 可为 `pending`，它是呈现标记，不是文件中的状态值。制作工具属性栏的“初始状态”设置默认值，宿主记录可以覆盖运行状态。
+文件与设备状态 API 仍只接受 `normal / warning / offline`。等待由绑定源尚未收到数据推导；清空数据时恢复等待，收到离线记录时显示真正离线。DOM 的 `data-status` 还可为 `pending / stale / disconnected`，它们是呈现标记，不是文件中的状态值。制作工具属性栏的“初始状态”设置默认值，宿主记录可以覆盖运行状态。
 
 图片和 HTML 快照保留相同状态外观，等待节点不会获得伪造的数据记录。编辑器的蓝灰主题不包含在组件的节点样式中；组件样式仅作用于自身拓扑及控制区。
 
@@ -191,7 +191,7 @@ v3 连线增加两个可选字段：
 
 ## v3 图面元素与兼容性
 
-组件包版本为 `0.3.0`，包的 `./schema` 指向包含链路状态/流转扩展的 v3，`./schema/v2` 保留旧 Schema。`0.1.x` 组件不支持 v3，需配套更新，不能只将文件的版本号改回 2，否则会丢失图面内容。
+组件包版本为 `0.4.0`，增加运行数据超时及接收状态；通用文件仍为 v3，包的 `./schema` 指向包含链路状态/流转扩展的 v3，`./schema/v2` 保留旧 Schema。`0.1.x` 组件不支持 v3，需配套更新，不能只将文件的版本号改回 2，否则会丢失图面内容。
 
 `topology.elements` 是可选数组，最多 100 项，元素公共字段为 `id`、`kind`、`x`、`y`、`width`、`height`、`title`、`color` 及可选 `locked`。宽度 160–10000、高度 80–10000 px，坐标范围与节点一致。三种类型：
 
@@ -221,6 +221,40 @@ SVG/PNG/HTML 与独立组件使用同一套图面 SVG 内容。JSON 和 HTML 保
 
 `/viewer.html?instances=2` 用两个独立实例验证数据隔离。右侧“填入示例数据”只是一次性准备输入，点击“更新数据”才发送给第一个实例，不会自动启动模拟器。
 
+## 接收时间与断流处理（0.4.0）
+
+```ts
+const viewer = new TopologyViewer(container, {
+  definition,
+  freshness: { staleAfterMs: 15_000 },
+});
+viewer.configureFreshness({ staleAfterMs: 30_000 });
+
+// 宿主负责连接采集服务，并将连接状态通知组件。
+socket.addEventListener('close', () => viewer.setConnectionState('disconnected'));
+socket.addEventListener('open', () => viewer.setConnectionState('connected'));
+// 收到消息后按既有接口发送，设备与链路各自更新。
+viewer.updateData(devicePatch);
+viewer.updateLinkData(linkPatch);
+
+const status = viewer.getDataStatus();
+// nodes 按拓扑节点 ID 索引，links 按链路 ID 索引。
+console.log(status.nodes['ant-01']);
+// { phase: 'fresh', receivedAt: 1792850000000 }
+```
+
+- 默认超时 15000 毫秒，允许 100–86400000 毫秒整数，0 明确关闭自动过期。页面恢复前台时重新检查，后台标签页的定时节流不会将旧数据永久视为正常。
+- `receivedAt` 是组件本机接收时间的 Unix 毫秒数，不是设备采样时间；未收到为 null。业务采样时间可作为自己的数据字段提供，不能用它伪造接收时间。
+- `phase` 为 `waiting / fresh / stale / disconnected / snapshot`。等待尚无有效消息，过期为超时或重连后尚未收到新消息；设备 normal/warning/offline 与此独立。过期或连接中断时参数为 `—`，关联链路未知并停止流转，仍保留最后接收时间。实际新鲜的离线记录才使链路显示断开。
+- `setData` / `setLinkData` 替换对应通道，未包含的对象恢复等待。`updateData` / `updateLinkData` 只刷新本次提供的已知对象；空补丁、空记录及非法更新不延长寿命。批量数据先校验，无效记录整体拒绝。参数按对象计时，一次有效局部更新合并该对象的已有字段，不提供每个参数单独的超时。
+- `setConnectionState('disconnected')` 立即停止实时展示，`connected` 不刷新旧接收时间；已断开对象需收到新数据才恢复。数据 API 不替宿主推断连接已经恢复，宿主应在重连后显式通知。
+- `getDataStatus()` 返回副本，包含 `nodes`、`links`、`connection`、`staleAfterMs` 与 `mode`（live/snapshot/simulation，组件使用前两种）。节点与链路数据互不清空；换定义清空两类运行值和接收状态，保留超时设置。销毁清理定时器与可见性监听，不影响其他实例。
+- 展示组件顶部显示接收/过期/等待数量，点击节点显示接收时间，悬停可查看时间。宿主可用 `dataStatus: false` 隐藏顶部说明，并自行调用 `getDataStatus()` 展示。
+
+导出 HTML 使用 `snapshot: true` 冻结初始数据及 `snapshotState` 中的接收状态，包含导出时已过期的节点；原始接收时间不会被打开文件的时间覆盖。可将构造选项 `snapshotState: { nodes, links }` 用于自己保存的运行快照，每项为 `{ phase, receivedAt }`。这些内容只属于展示快照，不进入 `.topology.json`。初次调用数据更新或连接状态 API 后进入实时模式，未更新对象恢复等待，之后按超时处理；空增量更新不触发切换。HTML 沿用导出时的超时设置，PNG/SVG 为静态外观。
+
+从 0.3.x 升级时需要留意默认超时：连续展示需持续发送有效消息；静态嵌入可选择快照模式，或明确将超时设为 0。
+
 ## 制作工具中的宿主数据验证
 
 制作工具默认使用模拟数据，每两秒采样。画布工具栏可选择“宿主数据”，清空模拟值并等待宿主更新。下面的接口仅供制作工具验证，独立组件继续使用上文的 `setData()` / `updateData()`。
@@ -232,6 +266,10 @@ window.stationPrototype.updateTelemetry('DEV-001', {
   elevation: 42.3,
 }, 'normal');
 window.stationPrototype.getDataMode(); // 'external'
+window.stationPrototype.configureFreshness({ staleAfterMs: 15_000 });
+window.stationPrototype.setConnectionState('disconnected');
+window.stationPrototype.setConnectionState('connected'); // 还需新消息恢复
+window.stationPrototype.getDataStatus(); // 同样按节点 ID / 链路 ID 返回接收状态
 
 // 主动恢复模拟数据，清空本次宿主值及采样历史。
 window.stationPrototype.setDataMode('simulation');
@@ -245,7 +283,7 @@ window.stationPrototype.setDataMode('simulation');
 
 在制作工具的“导出拓扑”中选择 HTML，下载一个自包含文件。它内嵌当前文档、展示组件、样式和导出时的数据，可通过 `file://` 双击离线打开，也可部署到任意静态服务器，无需 CDN、原制作工具或浏览器拓扑库。
 
-初始参数是制作工具导出时的模拟数据快照，不会自动变化。导出页提供与展示组件相同的数据接口：
+初始参数是制作工具导出时的模拟或宿主数据快照，保留当时的等待、过期和离线状态，不会自行采样。首次收到宿主更新后进入实时超时逻辑。导出页提供与展示组件相同的数据接口：
 
 ```js
 // 在导出页面中，数据的业务 ID 和字段路径与原文档的绑定保持一致。

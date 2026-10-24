@@ -144,7 +144,7 @@ bun run deploy
 
 图面操作均可一步撤销。查看模式和独立展示隐藏编辑手柄，图面元素不计入业务节点数及参数采样。只包含注释的图也可导出 PNG、SVG 和离线 HTML。
 
-文件升级为 Topology v3；旧 v1/v2 可导入，新文件需使用支持 v3 的制作工具和 `0.3.0` 展示组件。旧版 Schema 保留在 `schema/topology-v2.schema.json`，不可仅降低版本号来使用新文件。
+文件升级为 Topology v3；旧 v1/v2 可导入，新文件需使用支持 v3 的制作工具和 `0.4.0` 展示组件。旧版 Schema 保留在 `schema/topology-v2.schema.json`，不可仅降低版本号来使用新文件。
 
 ## 文件格式与旧数据
 
@@ -185,6 +185,14 @@ bun run build
 HTML 默认展示导出时的模拟数据快照，没有自动采集或刷新计时器。宿主通过导出页面的 `window.topologyViewer.setData(data)` / `updateData(patch)` 更新数据，按文档中的业务对象 ID、字段绑定提供数据。完整示例见 [HTML 接入说明](docs/integration.md#独立-html-文件)。
 
 `bun run dev` 和 `bun run build` 会先生成独立展示包，用于 HTML 导出。展示组件源码修改后需重启开发服务，以刷新导出时内嵌的运行时。
+
+## 数据新鲜度
+
+宿主数据默认 15 秒未更新即过期。节点参数显示 `—`，链路变为未知并停止流转；过期、数据连接中断和设备真实离线分别显示。节点与链路分别计时，局部更新只延长对应对象的有效期，重连后需收到新数据才恢复。
+
+制作工具工具栏的“数据接入设置”可调整超时或通知连接中断；节点/链路详情显示接收时间。独立组件支持 `freshness: { staleAfterMs: 15000 }`、`configureFreshness()`、`setConnectionState()` 和 `getDataStatus()`。超时设为 0 可明确关闭；设置及接收时间均不进入拓扑文件或撤销历史。宿主仍负责实际采集及连接管理。
+
+HTML 初始快照冻结导出时的有效状态，收到首次宿主更新后转入实时超时逻辑。接入示例及快照模式见 [组件接入说明](docs/integration.md)。
 
 ## 模板与数据绑定
 

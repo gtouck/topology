@@ -1,4 +1,5 @@
 import type { DeviceStatus } from './topology';
+import type { FreshnessPhase } from './data-freshness';
 
 export type LinkStatus = 'up' | 'down' | 'unknown';
 export type FlowDirection = 'forward' | 'reverse' | 'both';
@@ -43,8 +44,11 @@ export function mergeLinkData(current: LinkTelemetryData, patch: unknown): LinkT
   }
   return parseLinkData(next); // Validate the whole update before callers replace their cache.
 }
-export function resolveLinkState(config: { status?: LinkStatus }, endpoints: { status: DeviceStatus; pending?: boolean }[], live?: LinkTelemetry, external = false) {
-  if (endpoints.some(end => end.status === 'offline' && !end.pending)) return { status: 'down' as const, active: false, reason: 'endpoint' as const };
+export function resolveLinkState(config: { status?: LinkStatus }, endpoints: { status: DeviceStatus; pending?: boolean; stale?: boolean }[], live?: LinkTelemetry, external = false, freshness?: FreshnessPhase) {
+  if (endpoints.some(end => end.status === 'offline' && !end.pending && !end.stale)) return { status: 'down' as const, active: false, reason: 'endpoint' as const };
+  if (freshness === 'disconnected') return { status: 'unknown' as const, active: false, reason: 'disconnected' as const };
+  if (freshness === 'stale') return { status: 'unknown' as const, active: false, reason: 'stale' as const };
+  if (endpoints.some(end => end.stale)) return { status: 'unknown' as const, active: false, reason: 'endpoint-stale' as const };
   if (live) return { status: live.status, active: live.status === 'up' && live.active !== false, reason: 'host' as const };
   if (external || endpoints.some(end => end.pending)) return { status: 'unknown' as const, active: false, reason: 'waiting' as const };
   const status = config.status ?? 'up';
@@ -52,5 +56,5 @@ export function resolveLinkState(config: { status?: LinkStatus }, endpoints: { s
 }
 export type ResolvedLinkState = ReturnType<typeof resolveLinkState>;
 export function linkStateLabel(state: ResolvedLinkState) {
-  return state.reason === 'endpoint' ? '断开 · 端点离线' : state.reason === 'waiting' ? '等待链路数据' : state.status === 'up' && !state.active ? '连通 · 空闲' : linkStatusLabels[state.status];
+  return state.reason === 'endpoint' ? '断开 · 端点离线' : state.reason === 'disconnected' ? '数据连接中断' : state.reason === 'stale' ? '链路数据已过期' : state.reason === 'endpoint-stale' ? '端点数据已过期' : state.reason === 'waiting' ? '等待链路数据' : state.status === 'up' && !state.active ? '连通 · 空闲' : linkStatusLabels[state.status];
 }

@@ -2,14 +2,15 @@ import { Graph, type Node } from '@antv/x6';
 import { parseDocument, definitionsFromTemplates, newId, type TopologyDocument } from './document';
 import { addRenderedNode, edgeLabels, installCableTexture, registerTopologyShapes } from './rendering';
 import { cableAppearance, cableAttributes } from './cables';
-import { resolveNodeData, type TelemetryData } from './runtime-data';
+import { resolveNodeData, parseTelemetryData, mergeTelemetryData, type TelemetryData } from './runtime-data';
 import { escapeHtml as esc } from './icons';
 import type { DeviceData, DeviceDefinition, DeviceRecord } from './topology';
 import cardStyles from './viewer-cards.css?inline';
 import statusStyles from './node-status.css?inline';
-import { updateNodeStatus } from './node-status-ui';
+import { updateNodeStatus, updateReceivedState } from './node-status-ui';
+import { FreshnessTracker, parseFreshness, parseFreshnessSnapshot, type FreshnessOptions, type ConnectionState, type RuntimeDataStatus, type FreshnessSnapshot } from './data-freshness';
 import { addDiagramNode, isDeviceNode, syncDrawingLayers } from './diagram-rendering';
-import { parseLinkData, mergeLinkData, resolveLinkState, type LinkTelemetryData, type LinkTelemetryPatch } from './link-state';
+import { parseLinkData, mergeLinkData, resolveLinkState, linkStateLabel, type LinkTelemetryData, type LinkTelemetryPatch } from './link-state';
 import { renderLink } from './link-rendering';
 import flowStyles from './link-flow.css?inline';
 
@@ -19,6 +20,10 @@ export interface TopologyViewerOptions {
   linkData?: LinkTelemetryData;
   animations?: boolean;
   controls?: boolean;
+  freshness?: FreshnessOptions;
+  snapshot?: boolean;
+  snapshotState?: { nodes?: FreshnessSnapshot; links?: FreshnessSnapshot };
+  dataStatus?: boolean;
   onNodeClick?: (event: { node: DeviceRecord; source: string }) => void;
 }
 
@@ -30,7 +35,7 @@ const styles = `${cardStyles}${statusStyles.replaceAll('#graph ', '.topology-vie
 .topology-viewer .tv-controls{position:absolute;right:12px;bottom:12px;display:flex;gap:4px;align-items:center;background:#fff;border:1px solid #dfe7dd;border-radius:7px;padding:4px;z-index:2}
 .topology-viewer .tv-controls button{font:inherit;border:0;background:transparent;color:#7286a6;padding:5px 8px;cursor:pointer;border-radius:4px}.topology-viewer .tv-controls button:hover{background:#eef3fb}.topology-viewer .tv-controls button:focus-visible{outline:2px solid #8eabd6}
 .topology-viewer .tv-controls span{font-size:10px;min-width:32px;text-align:center;color:#8899b2}
-.topology-viewer .tv-empty{position:absolute;inset:0;display:grid;place-items:center;color:#a0b196;font-size:13px;pointer-events:none}
+.topology-viewer .tv-data-status{position:absolute;left:12px;top:10px;max-width:calc(100% - 24px);padding:5px 8px;border:1px solid #dfe5ed;border-radius:5px;background:#fffffff0;color:#788596;font-size:11px;pointer-events:none;z-index:2}\n.topology-viewer .tv-empty{position:absolute;inset:0;display:grid;place-items:center;color:#a0b196;font-size:13px;pointer-events:none}
 `;
 
 /** Framework-independent, read-only viewer. No storage, simulator, network or workbench imports. */
@@ -44,10 +49,20 @@ export class TopologyViewer {
   private destroyed = false;
   private observer: ResizeObserver;
   private frame = 0;
+  private nodeFreshness: FreshnessTracker;
+  private linkFreshness: FreshnessTracker;
+  private freshnessTimer?: ReturnType<typeof setTimeout>;
+  private snapshotMode = false;
+  private highlighted: string | null = null;
+  private visibilityHandler = () => { if (!this.destroyed && document.visibilityState === 'visible') this.refresh(); };
   private textureId = newId('braid');
 
   constructor(container: HTMLElement, private options: TopologyViewerOptions) {
     const checked = parseDocument(options.definition);
+    const initialData = parseTelemetryData(options.data ?? {}), initialLinks = parseLinkData(options.linkData ?? {});
+    const snapshotNodes = parseFreshnessSnapshot(options.snapshotState?.nodes ?? {}), snapshotLinks = parseFreshnessSnapshot(options.snapshotState?.links ?? {});
+    if (options.snapshotState && !options.snapshot) throw new Error('快照接收状态仅用于 snapshot 模式');
+    this.nodeFreshness = new FreshnessTracker(options.freshness); this.linkFreshness = new FreshnessTracker(options.freshness);
     if (!container || typeof container.appendChild !== 'function') throw new Error('请提供有效的展示容器');
     registerTopologyShapes();
     this.root = document.createElement('div'); this.root.className = 'topology-viewer';
@@ -72,21 +87,31 @@ export class TopologyViewer {
     this.observer = new ResizeObserver(() => { cancelAnimationFrame(this.frame); this.frame = requestAnimationFrame(() => { if (!this.destroyed) this.fit(); }); });
     this.observer.observe(container);
     this.setDefinition(checked);
-    if (options.data) this.setData(options.data);
-    if (options.linkData) this.setLinkData(options.linkData);
+    this.data = initialData; this.linkData = initialLinks;
+    this.snapshotMode = options.snapshot === true;
+    if (this.snapshotMode) {
+      this.nodeFreshness.freeze(this.nodeIdsFor(Object.keys(initialData)), snapshotNodes);
+      this.linkFreshness.freeze(Object.keys(initialLinks), snapshotLinks);
+    } else {
+      this.nodeFreshness.receive(this.nodeIdsFor(Object.keys(initialData).filter(key => Object.keys(initialData[key]).length > 0)));
+      this.linkFreshness.receive(Object.keys(initialLinks));
+    }
+    document.addEventListener('visibilitychange', this.visibilityHandler);
+    this.refresh();
   }
 
   private alive() { if (this.destroyed) throw new Error('展示组件已销毁'); }
-  private nodeState(node: Node) { const data = node.getData<DeviceData>(); return resolveNodeData(data, this.definitions[data.kind], this.data); }
+  private nodeState(node: Node) { const data = node.getData<DeviceData>(); return resolveNodeData(data, this.definitions[data.kind], this.data, this.nodeFreshness.state(node.id)); }
 
   setDefinition(input: unknown) {
     this.alive();
     const definition = parseDocument(input); // Validate before touching an existing view.
+    clearTimeout(this.freshnessTimer); this.nodeFreshness.clear(); this.linkFreshness.clear(); this.snapshotMode = false; this.highlighted = null;
     this.definition = definition; this.definitions = definitionsFromTemplates(definition.templates); this.data = {}; this.linkData = {};
     this.graph.clearCells();
     for (const record of definition.topology.nodes) addRenderedNode(this.graph, record, {
       definitions: this.definitions, status: (n) => this.nodeState(n).status,
-      pending: (n) => this.nodeState(n).pending,
+      pending: (n) => this.nodeState(n).pending, freshness: (n) => this.nodeState(n).freshness.phase,
       value: (n, key) => this.nodeState(n).values[key], statusLabel: (n) => this.nodeState(n).label,
     });
     for (const edge of definition.topology.edges) this.graph.addEdge({ id: edge.id, shape: 'station-cable', source: edge.source, target: edge.target, vertices: edge.vertices, connector: { name: 'rounded', args: { radius: 8 } }, labels: edgeLabels(edge.label), data: { kind: edge.kind, appearance: edge.appearance, status: edge.status, flow: edge.flow }, attrs: cableAttributes(cableAppearance(edge.kind, edge.appearance), false, this.textureId), zIndex: 0 });
@@ -100,36 +125,61 @@ export class TopologyViewer {
 
   getDefinition() { this.alive(); return structuredClone(this.definition); }
 
+  private nodeIdsFor(sources: string[]) {
+    const set = new Set(sources);
+    return this.definition.topology.nodes.filter(n => set.has(n.data.binding?.source || n.data.deviceId)).map(n => n.id);
+  }
+  private startLive() {
+    if (!this.snapshotMode) return;
+    this.snapshotMode = false; this.nodeFreshness.clear(); this.linkFreshness.clear();
+  }
   setLinkData(data: LinkTelemetryData) {
-    this.alive(); const checked = parseLinkData(data); this.linkData = checked; this.refresh();
+    this.alive(); const checked = parseLinkData(data); this.startLive();
+    this.linkData = checked; this.linkFreshness.receive(Object.keys(checked), true); this.refresh();
   }
   updateLinkData(patch: LinkTelemetryPatch) {
-    this.alive(); const checked = mergeLinkData(this.linkData, patch); this.linkData = checked; this.refresh();
+    this.alive(); const checked = mergeLinkData(this.linkData, patch);
+    const known = new Set(this.definition.topology.edges.map(e => e.id));
+    const keys = Object.keys(patch).filter(key => known.has(key) && Object.keys(patch[key]).some(field => field === 'status' || field === 'active'));
+    if (!keys.length) return;
+    this.startLive(); this.linkData = checked; this.linkFreshness.receive(keys); this.refresh();
   }
-
   setData(data: TelemetryData) {
-    this.alive();
-    if (!data || typeof data !== 'object' || Array.isArray(data) || Object.values(data).some((v) => !v || typeof v !== 'object' || Array.isArray(v))) throw new Error('实时数据需为按业务对象 ID 索引的对象');
-    this.data = structuredClone(data); this.refresh();
+    this.alive(); const checked = parseTelemetryData(data); this.startLive(); this.data = checked;
+    this.nodeFreshness.receive(this.nodeIdsFor(Object.keys(checked).filter(key => Object.keys(checked[key]).length > 0)), true); this.refresh();
   }
-
   updateData(patch: TelemetryData) {
-    this.alive();
-    const next = { ...this.data };
-    for (const [key, record] of Object.entries(patch)) {
-      if (!record || typeof record !== 'object' || Array.isArray(record)) throw new Error('实时数据记录不合法');
-      Object.defineProperty(next, key, { value: { ...(Object.hasOwn(next, key) ? next[key] : {}), ...record }, writable: true, enumerable: true, configurable: true });
-    }
-    this.setData(next);
+    this.alive(); const checked = parseTelemetryData(patch), next = mergeTelemetryData(this.data, checked);
+    const ids = this.nodeIdsFor(Object.keys(checked).filter(key => Object.keys(checked[key]).length > 0));
+    if (!ids.length) return;
+    this.startLive(); this.data = next; this.nodeFreshness.receive(ids); this.refresh();
   }
-
+  configureFreshness(options: FreshnessOptions) {
+    this.alive(); const checked = { staleAfterMs: parseFreshness(options) };
+    this.nodeFreshness.configure(checked); this.linkFreshness.configure(checked); this.refresh();
+  }
+  setConnectionState(state: ConnectionState) {
+    this.alive();
+    if (state !== 'connected' && state !== 'disconnected') throw new Error('数据连接状态不合法');
+    this.startLive(); this.nodeFreshness.setConnection(state); this.linkFreshness.setConnection(state); this.refresh();
+  }
+  getDataStatus(): RuntimeDataStatus {
+    this.alive();
+    return { nodes: this.nodeFreshness.snapshot(this.definition.topology.nodes.map(n => n.id)), links: this.linkFreshness.snapshot(this.definition.topology.edges.map(e => e.id)), connection: this.nodeFreshness.connection, staleAfterMs: this.nodeFreshness.staleAfterMs, mode: this.snapshotMode ? 'snapshot' : 'live' };
+  }
+  private scheduleFreshness() {
+    clearTimeout(this.freshnessTimer);
+    const delays = [this.nodeFreshness.nextDelay(), this.linkFreshness.nextDelay()].filter((value): value is number => value !== null);
+    if (delays.length) this.freshnessTimer = setTimeout(() => { if (!this.destroyed) this.refresh(); }, Math.min(...delays));
+  }
   private refresh() {
     this.graph.getNodes().filter(isDeviceNode).forEach((node) => {
       const state = this.nodeState(node);
       const view = this.graph.findViewByCell(node);
       const card = view?.container.querySelector<HTMLElement>('.device-card');
       if (!card) return;
-      updateNodeStatus(card, state.status, state.pending, state.label);
+      updateNodeStatus(card, state.status, state.pending, state.label, state.freshness.phase);
+      updateReceivedState(card, state.freshness);
       card.querySelectorAll<HTMLElement>('[data-metric]').forEach((el) => {
         const key = el.dataset.metric!;
         const metric = this.definitions[node.getData<DeviceData>().kind].metrics.find((m) => m.key === key)!;
@@ -142,19 +192,34 @@ export class TopologyViewer {
       const appearance = cableAppearance(data.kind, data.appearance);
       const endpoints = [edge.getSourceCell(), edge.getTargetCell()].filter(isDeviceNode).map(node => this.nodeState(node));
       const config = data;
-      const state = resolveLinkState(config, endpoints, Object.hasOwn(this.linkData, edge.id) ? this.linkData[edge.id] : undefined, true);
+      const state = resolveLinkState(config, endpoints, Object.hasOwn(this.linkData, edge.id) && this.linkFreshness.state(edge.id).phase !== 'waiting' ? this.linkData[edge.id] : undefined, true, this.linkFreshness.state(edge.id).phase);
       renderLink(this.graph, edge, appearance, state, { flow: config.flow, animate: this.options.animations !== false, textureId: this.textureId });
+      const container = this.graph.findViewByCell(edge)?.container as SVGElement | undefined;
+      if (container) { const text = updateReceivedState(container, this.linkFreshness.state(edge.id)), title = container.querySelector('title'); if (title) title.textContent = `${linkStateLabel(state)} · ${text}`; }
     });
+    this.renderDataStatus(); this.scheduleFreshness();
   }
 
   private highlight(id: string | null) {
+    this.highlighted = id; this.renderDataStatus();
     this.graph.getNodes().forEach((node) => this.graph.findViewByCell(node)?.container.querySelector('.device-card')?.classList.toggle('selected', node.id === id));
     this.graph.getEdges().forEach((edge) => { const view = this.graph.findViewByCell(edge); if (view) (view.container as SVGElement).style.opacity = !id || edge.getSourceCellId() === id || edge.getTargetCellId() === id ? '1' : '.2'; });
   }
 
+  private renderDataStatus() {
+    if (this.options.dataStatus === false) return;
+    let label = this.root.querySelector<HTMLElement>('.tv-data-status');
+    if (!label) { label = document.createElement('div'); label.className = 'tv-data-status'; this.root.appendChild(label); }
+    if (this.highlighted) {
+      label.dataset.receivedLabel = ''; updateReceivedState(label, this.nodeFreshness.state(this.highlighted));
+    } else {
+      const status = this.getDataStatus(), counts = Object.values(status.nodes).reduce((result, state) => { result[state.phase] = (result[state.phase] || 0) + 1; return result; }, {} as Record<string, number>);
+      label.textContent = status.connection === 'disconnected' ? '数据连接中断' : this.snapshotMode ? '导出数据快照' : `实时数据 · 已接收 ${counts.fresh || 0} · 过期 ${counts.stale || 0} · 等待 ${counts.waiting || 0}`;
+    }
+  }
   fit() { this.alive(); if (this.graph.getNodes().length) this.graph.zoomToFit({ padding: 36, maxScale: 1 }); }
   destroy() {
     if (this.destroyed) return;
-    this.destroyed = true; cancelAnimationFrame(this.frame); this.observer.disconnect(); this.root.onclick = null; this.graph.dispose(); this.root.remove(); this.data = {}; this.linkData = {};
+    this.destroyed = true; clearTimeout(this.freshnessTimer); document.removeEventListener('visibilitychange', this.visibilityHandler); cancelAnimationFrame(this.frame); this.observer.disconnect(); this.root.onclick = null; this.graph.dispose(); this.root.remove(); this.data = {}; this.linkData = {};
   }
 }

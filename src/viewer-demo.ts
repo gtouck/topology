@@ -1,3 +1,4 @@
+import type { ConnectionState } from './data-freshness';
 import { TopologyViewer } from './viewer';
 import { createDocument, parseDocument, sampleDocument, type TopologyDocument } from './document';
 import { LIBRARY_KEY, parseLibrary } from './library';
@@ -6,7 +7,7 @@ import type { TelemetryData } from './runtime-data';
 import { parseLinkData } from './link-state';
 import './viewer-demo.css';
 
-document.querySelector('#viewer-demo')!.innerHTML = `<header><a href="./index.html">topology.</a><div><strong>独立拓扑展示</strong><span>与编辑器分离 · 可嵌入其他软件</span></div><label class="demo-button">导入拓扑文件<input id="viewer-file" type="file" accept=".json" hidden/></label></header><main><div class="demo-title"><div><small>TOPOLOGY VIEWER</small><h1 id="viewer-title"></h1><p id="viewer-description"></p></div><span id="viewer-data-status">等待宿主数据</span></div><div class="demo-layout"><section><div id="standalone-viewer"></div><div id="second-viewer" hidden></div><div class="viewer-demo-note">展示组件只加载文件与宿主传入的数据，不包含编辑器、存储或模拟计时器。</div></section><aside><h2>宿主数据</h2><p>按业务对象 ID 提供参数和状态。编辑器中可配置字段映射。</p><textarea id="viewer-data" aria-label="宿主实时数据" spellcheck="false">{}</textarea><h2 class="link-demo-heading">链路状态</h2><p>按链路 ID 提供 status：up / down / unknown，可用 active 控制连通后的流转。</p><textarea id="viewer-link-data" aria-label="链路实时状态" spellcheck="false">{}</textarea><div class="demo-actions"><button id="apply-viewer-data">更新数据</button><button id="sample-viewer-data">填入示例数据</button><button id="clear-viewer-data">清空</button></div><p id="viewer-error" role="alert"></p><div class="demo-selection"><h2>节点点击事件</h2><pre id="viewer-selection">点击节点查看回调内容</pre></div><details><summary>JavaScript 接入</summary><pre>const viewer = new TopologyViewer(container, { definition });
+document.querySelector('#viewer-demo')!.innerHTML = `<header><a href="./index.html">topology.</a><div><strong>独立拓扑展示</strong><span>与编辑器分离 · 可嵌入其他软件</span></div><label class="demo-button">导入拓扑文件<input id="viewer-file" type="file" accept=".json" hidden/></label></header><main><div class="demo-title"><div><small>TOPOLOGY VIEWER</small><h1 id="viewer-title"></h1><p id="viewer-description"></p></div><span id="viewer-data-status">等待宿主数据</span></div><div class="demo-layout"><section><div id="standalone-viewer"></div><div id="second-viewer" hidden></div><div class="viewer-demo-note">展示组件只加载文件与宿主传入的数据，不包含编辑器、存储或模拟计时器。</div></section><aside><h2>接收时效</h2><div class="freshness-demo-controls"><label>超时秒数（0 关闭）<input id="viewer-timeout" type="number" min="0" max="86400" step="0.1" value="15"/></label><label>数据连接<select id="viewer-connection"><option value="connected">已连接</option><option value="disconnected">已中断</option></select></label></div><button class="demo-freshness-apply" id="apply-viewer-freshness">应用接收设置</button><h2>宿主数据</h2><p>按业务对象 ID 提供参数和状态。编辑器中可配置字段映射。</p><textarea id="viewer-data" aria-label="宿主实时数据" spellcheck="false">{}</textarea><h2 class="link-demo-heading">链路状态</h2><p>按链路 ID 提供 status：up / down / unknown，可用 active 控制连通后的流转。</p><textarea id="viewer-link-data" aria-label="链路实时状态" spellcheck="false">{}</textarea><div class="demo-actions"><button id="apply-viewer-data">更新数据</button><button id="sample-viewer-data">填入示例数据</button><button id="clear-viewer-data">清空</button></div><p id="viewer-error" role="alert"></p><div class="demo-selection"><h2>节点点击事件</h2><pre id="viewer-selection">点击节点查看回调内容</pre></div><details><summary>JavaScript 接入</summary><pre>const viewer = new TopologyViewer(container, { definition });
 viewer.setData(data);
 viewer.updateData(patch);
 viewer.destroy();</pre></details></aside></div></main>`;
@@ -31,6 +32,16 @@ let second: TopologyViewer | undefined;
 if (new URLSearchParams(location.search).get('instances') === '2') { el('#second-viewer').hidden = false; second = new TopologyViewer(el('#second-viewer'), { definition }); }
 function updateMetadata() { el('#viewer-title').textContent = definition.name; el('#viewer-description').textContent = definition.description || `${definition.topology.nodes.length} 个节点 · ${definition.topology.edges.length} 条连接 · Topology v3`; }
 updateMetadata();
+el('#apply-viewer-freshness').onclick = () => {
+  try {
+    const timeout = el<HTMLInputElement>('#viewer-timeout').value;
+    if (!timeout.trim()) throw new Error('请填写超时秒数，0 表示关闭');
+    viewer.configureFreshness({ staleAfterMs: Number(timeout) * 1000 });
+    const connection = el<HTMLSelectElement>('#viewer-connection').value as ConnectionState;
+    if (connection !== viewer.getDataStatus().connection) viewer.setConnectionState(connection);
+    el('#viewer-error').textContent = '';
+  } catch (error) { el('#viewer-error').textContent = error instanceof Error ? error.message : '设置不合法'; }
+};
 el('#apply-viewer-data').onclick = () => {
   try { const data = JSON.parse(el<HTMLTextAreaElement>('#viewer-data').value); const links = parseLinkData(JSON.parse(el<HTMLTextAreaElement>('#viewer-link-data').value)); viewer.setData(data); viewer.setLinkData(links); el('#viewer-error').textContent = ''; el('#viewer-data-status').textContent = `宿主更新 · ${new Date().toLocaleTimeString()}`; }
   catch (error) { el('#viewer-error').textContent = error instanceof Error ? error.message : '数据不合法'; }

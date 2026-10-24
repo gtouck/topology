@@ -13,7 +13,8 @@ import { downloadBlob, exportFilename, graphSvg, svgToPng, standaloneHtml } from
 import type { ExportState } from './export-svg';
 import { EditorTelemetry, formatMetricValue, type EditorDataMode } from './editor-telemetry';
 import { metricOptions, metricDetails, metricValueHtml } from './device-details';
-import { updateNodeStatus, updateStatusBadge } from './node-status-ui';
+import { updateNodeStatus, updateStatusBadge, updateReceivedState } from './node-status-ui';
+import { FreshnessTracker, parseFreshness, isUnavailable, isExpired, freshnessLabel, type FreshnessOptions, type FreshnessState, type ConnectionState, type RuntimeDataStatus } from './data-freshness';
 import { defaultLinkFlow, flowDirections, flowSpeeds, linkStatusLabels, linkStateLabel, parseLinkStatus, parseLinkFlow, parseLinkData, resolveLinkState, type LinkStatus, type LinkFlow, type LinkTelemetryData, type ResolvedLinkState } from './link-state';
 import { renderLink } from './link-rendering';
 import { copySelection, pasteSelection, moveSelection, deleteSelection, setPositionLocks, type TopologyClipboard } from './editor-commands';
@@ -77,6 +78,8 @@ let contextPoint: { x: number; y: number } | null = null;
 const documentHistories = new Map<string, { undo: TopologyDocument[]; redo: TopologyDocument[] }>();
 const filters = new Set<LinkKind>(['rf', 'if', 'ethernet', 'logical']);
 const telemetry = new EditorTelemetry();
+const linkFreshness = new FreshnessTracker();
+let freshnessTimer: ReturnType<typeof setTimeout> | undefined;
 const values = telemetry.values;
 const runtimeStatuses = telemetry.statuses;
 const historyValues = telemetry.history;
@@ -109,7 +112,7 @@ $('#app').innerHTML = `
       <section class="topology-panel" aria-label="拓扑画布">
         <div class="panel-heading"><div class="panel-title"><span class="panel-symbol">${icon('Network', 18)}</span><h2>拓扑画布</h2><span class="tag">通用拓扑</span></div><div class="workspace-summary" aria-label="拓扑计数"><span><strong id="stat-total">0</strong> 节点</span><span><strong id="stat-links">0</strong> 链路</span></div><div class="panel-heading-actions"><span id="save-status" class="save-status">${icon('Check', 13)}示例布局</span>${button('import', '导入 JSON', 'Upload')}${button('export-options', '导出拓扑', 'Download')}${button('viewer', '在独立展示页打开', 'ExternalLink')}${button('draft-history', '草稿与历史', 'Clock3')}${button('fullscreen', '全屏查看', 'Maximize')}</div></div>
         <div id="draft-notice" class="draft-notice" hidden><span id="draft-message" role="status"></span><button class="button" data-action="retry-draft">重试保存草稿</button><button class="button" data-action="export-current-backup">导出当前图</button><button class="button" data-action="storage-reload">重新读取</button></div>
-        <div class="canvas-toolbar"><div class="link-filters" aria-label="链路筛选">${(Object.entries(linkTypes) as [LinkKind, typeof linkTypes[LinkKind]][]).map(([kind, def]) => `<button data-filter="${kind}" class="filter-chip active" aria-pressed="true"><span style="--link-color:${def.color}"></span>${def.label}</button>`).join('')}</div><div class="toolbar-right"><span class="live-label" id="live-label"><i></i>模拟实时</span><span class="toolbar-separator"></span><select id="data-mode" aria-label="数据模式"><option value="simulation">模拟数据</option><option value="external">宿主数据</option></select>${button('pause', '暂停模拟数据', 'Pause')}${button('outage', '模拟节点离线', 'Unplug', '离线演示', 'subtle')}</div></div>
+        <div class="canvas-toolbar"><div class="link-filters" aria-label="链路筛选">${(Object.entries(linkTypes) as [LinkKind, typeof linkTypes[LinkKind]][]).map(([kind, def]) => `<button data-filter="${kind}" class="filter-chip active" aria-pressed="true"><span style="--link-color:${def.color}"></span>${def.label}</button>`).join('')}</div><div class="toolbar-right"><span class="live-label" id="live-label"><i></i>模拟实时</span><span class="toolbar-separator"></span><select id="data-mode" aria-label="数据模式"><option value="simulation">模拟数据</option><option value="external">宿主数据</option></select>${button('data-settings', '数据接入设置', 'Settings')}${button('pause', '暂停模拟数据', 'Pause')}${button('outage', '模拟节点离线', 'Unplug', '离线演示', 'subtle')}</div></div>
         <div class="selection-toolbar" id="edit-tools" hidden><div class="canvas-tool-switch" role="group" aria-label="画布工具">${button('tool-select', '拖动空白处框选节点', 'MousePointer2', '框选')}${button('tool-pan', '拖动空白处平移画布，Shift 拖动可框选', 'Hand', '平移')}</div><span class="toolbar-separator"></span>${button('undo', '撤销 Ctrl / ⌘ Z', 'Undo2')}${button('redo', '重做 Ctrl / ⌘ Shift Z', 'Redo2')}<span class="toolbar-separator"></span>${button('select-all', '全选图形对象 Ctrl / ⌘ A', 'Scan')}${button('copy', '复制节点及内部连线 Ctrl / ⌘ C', 'Copy')}${button('paste', '粘贴 Ctrl / ⌘ V', 'ClipboardPaste')}${button('duplicate', '复制副本 Ctrl / ⌘ D', 'CopyPlus')}${button('delete', '删除选中对象 Delete', 'Trash2')}<span class="toolbar-separator"></span><select id="align-command" aria-label="节点对齐" title="以首个锁定节点为参照；无锁定节点时以选区边界为参照"><option value="">对齐</option>${Object.entries(alignmentLabels).map(([key, label]) => `<option value="${key}">${label}</option>`).join('')}</select><select id="distribute-command" aria-label="节点分布" title="分布只处理未锁定节点"><option value="">分布</option><option value="horizontal">水平等距</option><option value="vertical">垂直等距</option><option value="gap">指定间距…</option></select>${button('lock-selected', '锁定位置，移动和批量删除会跳过', 'LockKeyhole')}${button('unlock-selected', '解锁所选节点', 'LockKeyholeOpen')}<span class="toolbar-separator"></span>${button('add-group', '将所选节点组成区域；无选择时创建空区域', 'Layers', '分组')}${button('add-note', '添加文字注释', 'PencilRuler', '注释')}${button('add-legend', '添加链路和状态图例', 'Info', '图例')}<select id="layer-command" aria-label="图形层次"><option value="">层次</option><option value="front">置顶</option><option value="back">置底</option></select><span id="selection-count">未选择</span><span class="selection-hint">Ctrl / ⌘ / Shift 点选 · 方向键移动</span></div>
         <div class="canvas-layout"><div class="canvas-wrap" id="canvas-wrap"><div class="canvas-watermark">当前拓扑</div><div id="graph" tabindex="0" aria-label="拓扑画布"></div><div class="canvas-empty" id="canvas-empty" hidden>${icon('Network', 32)}<strong>添加第一个节点</strong><p>展开节点库，点击模板或将其拖入画布。</p></div><div class="canvas-mode" id="canvas-mode">${icon('LockKeyhole', 13)}查看模式 · 布局已锁定</div><div class="canvas-controls">${button('zoom-out', '缩小', 'Minus')}<span id="zoom-label">100%</span>${button('zoom-in', '放大', 'Plus')}<span class="toolbar-separator"></span>${button('fit', '适应画布', 'Scan')}</div></div><div id="inspector-resizer" class="panel-resizer inspector-resizer" role="separator" tabindex="0" aria-label="调整属性栏宽度" aria-orientation="vertical" aria-controls="inspector" aria-valuemin="240" aria-valuemax="420" aria-valuenow="280" title="拖动调宽；方向键微调；双击恢复默认"></div><aside id="inspector" class="inspector" aria-label="节点与链路属性"></aside><button class="inspector-toggle icon-button" data-action="toggle-inspector" aria-controls="inspector" aria-expanded="true" title="收起属性栏" aria-label="收起属性栏">${icon('PanelRight')}</button></div>
         <div class="panel-footer"><span><span class="tiny-dot" id="footer-dot"></span><span id="footer-mode">查看模式</span><span class="footer-divider">/</span><span id="footer-hint">点击节点查看参数 · 滚轮缩放 · 拖动画布平移</span></span><span id="update-time">数据更新 --:--:--</span></div>
@@ -122,13 +125,23 @@ $('#app').innerHTML = `
   <div id="canvas-context-menu" class="canvas-context-menu" role="menu" aria-label="画布菜单" hidden></div>
 `;
 
+function runtimeFreshness(node: Node): FreshnessState { return telemetry.mode === 'external' ? telemetry.freshness.state(node.id) : { phase: 'snapshot', receivedAt: lastUpdate.getTime() }; }
+function updateEditorReceivedState(element: HTMLElement | SVGElement, state: FreshnessState) {
+  updateReceivedState(element, state);
+  if (telemetry.mode === 'simulation') {
+    const label = `模拟采样 · ${time(lastUpdate)}`;
+    element.setAttribute('title', label);
+    if (element instanceof HTMLElement && element.matches('[data-received-label]')) element.textContent = label;
+  }
+}
+function runtimePending(node: Node) { return telemetry.mode === 'external' && runtimeFreshness(node).phase === 'waiting'; }
 function runtimeStatus(node: Node): DeviceStatus {
-  if (telemetry.mode === 'external' && !values.has(node.id)) return 'offline';
+  if (runtimePending(node)) return 'offline';
   return outage && node.id === outageNodeId ? 'offline' : (runtimeStatuses.get(node.id) || node.getData<DeviceData>().status || 'normal');
 }
 
 function runtimeLabel(node: Node) {
-  if (telemetry.mode === 'external' && !values.has(node.id)) return '等待数据';
+  if (telemetry.mode === 'external' && isUnavailable(runtimeFreshness(node))) return freshnessLabel(runtimeFreshness(node));
   const status = runtimeStatus(node);
   return telemetry.mode === 'simulation' && status === 'warning' && node.getData<DeviceData>().kind === 'amplifier' ? '温度偏高 · 请关注' : statusLabels[status];
 }
@@ -137,7 +150,7 @@ function dataModeLabel() { return telemetry.mode === 'external' ? '宿主数据'
 
 function metricValue(node: Node, key: string) {
   const def = devices[node.getData<DeviceData>().kind].metrics.find((m) => m.key === key)!;
-  if (!def) return '—';
+  if (!def || (telemetry.mode === 'external' && isUnavailable(runtimeFreshness(node)))) return '—';
   const value = values.get(node.id)?.[key] ?? (telemetry.mode === 'simulation' ? def.base : undefined);
   return formatMetricValue(value, def);
 }
@@ -191,13 +204,16 @@ $('#inspector').addEventListener('toggle', (event) => {
   if (event.target instanceof HTMLDetailsElement && $('#inspector').contains(event.target)) workbench.rememberSection(event.target);
 }, true);
 function runtimeLinkState(edge: Edge) {
-  const endpoints = [edge.getSourceCell(), edge.getTargetCell()].filter(isDeviceNode).map(node => ({ status: runtimeStatus(node), pending: telemetry.mode === 'external' && !values.has(node.id) }));
+  const endpoints = [edge.getSourceCell(), edge.getTargetCell()].filter(isDeviceNode).map(node => ({ status: runtimeStatus(node), pending: runtimePending(node), stale: isExpired(runtimeFreshness(node)) }));
   const live = telemetry.mode === 'external' ? Object.hasOwn(linkData, edge.id) ? linkData[edge.id] : undefined : linkDemonstration.get(edge.id);
-  return resolveLinkState(edge.getData() || {}, endpoints, live, telemetry.mode === 'external');
+  const freshness = telemetry.mode === 'external' ? linkFreshness.state(edge.id) : undefined;
+  return resolveLinkState(edge.getData() || {}, endpoints, freshness?.phase === 'waiting' ? undefined : live, telemetry.mode === 'external', freshness?.phase);
 }
 function updateLinkBadge(state: ResolvedLinkState) {
   const badge = document.querySelector<HTMLElement>('#edge-runtime-status');
   if (badge) { badge.dataset.linkStatus = state.status; badge.textContent = linkStateLabel(state); }
+  const received = document.querySelector<HTMLElement>('#link-received');
+  if (received && selected?.isEdge()) updateEditorReceivedState(received, telemetry.mode === 'external' ? linkFreshness.state(selected.id) : { phase: 'snapshot', receivedAt: lastUpdate.getTime() });
   const demo = document.querySelector<HTMLButtonElement>('[data-action="toggle-link-demo"]');
   if (demo) { demo.disabled = telemetry.mode === 'external' || state.reason === 'endpoint'; demo.textContent = state.status === 'down' ? '模拟链路连通' : '模拟链路断开'; }
 }
@@ -212,7 +228,7 @@ function renderCable(edge: Edge) {
 function addDevice(record: DeviceRecord) {
   return addRenderedNode(graph, record, {
     definitions: devices, editor: true, status: runtimeStatus, locked: cellLocked,
-    pending: (node) => telemetry.mode === 'external' && !values.has(node.id),
+    pending: runtimePending, freshness: (node) => runtimeFreshness(node).phase,
     value: (node, key) => runtimeStatus(node) === 'offline' ? '—' : metricValue(node, key),
     selected: (node) => mode === 'edit' ? graph.isSelected(node) : selected?.id === node.id,
     statusLabel: runtimeLabel,
@@ -239,10 +255,10 @@ function loadTopology(data: Snapshot, fit = false, preserveTelemetry = false) {
   dragSession = null; resizeBefore = null; transform.clearWidgets(); graph.cleanSelection();
   if (preserveTelemetry) {
     telemetry.prune(new Set(data.nodes.map((node) => node.id)));
-    const ids = new Set(data.edges.map(edge => edge.id));
+    const ids = new Set(data.edges.map(edge => edge.id)); linkFreshness.prune(ids);
     linkData = Object.fromEntries(Object.entries(linkData).filter(([id]) => ids.has(id)));
     for (const id of linkDemonstration.keys()) if (!ids.has(id)) linkDemonstration.delete(id);
-  } else { telemetry.clear(); linkData = {}; linkDemonstration.clear(); }
+  } else { telemetry.clear(); linkFreshness.clear(); linkData = {}; linkDemonstration.clear(); }
   layerOrder = data.order ? [...data.order] : undefined; elementsPresent = data.elements !== undefined; legendEdgesKey = '';
   graph.clearCells(); data.nodes.forEach(addDevice); data.edges.forEach(addLink);
   for (const element of data.elements || []) addDiagramNode(graph, element, snapshot);
@@ -392,15 +408,34 @@ function syncDataControls() {
   pause.title = paused ? '继续模拟数据' : '暂停模拟数据';
   pause.setAttribute('aria-label', pause.title);
   $<HTMLButtonElement>('[data-action="outage"]').disabled = external;
-  $('#live-label').innerHTML = `<i></i>${external ? values.size ? '宿主数据' : '等待宿主数据' : paused ? '模拟已暂停' : '模拟实时'}`;
+  const expired = deviceNodes().filter(node => isExpired(runtimeFreshness(node))).length;
+  $('#live-label').innerHTML = `<i></i>${external ? telemetry.freshness.connection === 'disconnected' ? '数据连接中断' : expired ? `数据过期 ${expired}` : values.size ? '宿主数据' : '等待宿主数据' : paused ? '模拟已暂停' : '模拟实时'}`;
   $('#live-label').classList.toggle('paused', !external && paused);
 }
 
 function setDataMode(next: EditorDataMode) {
   if (!telemetry.setMode(next)) return;
-  paused = false; tick = 0; lastUpdate = new Date(); linkData = {}; resetOutage();
+  paused = false; tick = 0; lastUpdate = new Date(); linkData = {}; linkFreshness.clear(); resetOutage();
   syncDataControls(); renderSidebar(); updateRuntime(); if (mode === 'monitor') renderInspector();
 }
+
+function configureFreshness(options: FreshnessOptions) {
+  const checked = { staleAfterMs: parseFreshness(options) };
+  telemetry.freshness.configure(checked); linkFreshness.configure(checked); updateRuntime();
+}
+function setConnectionState(state: ConnectionState) {
+  if (state !== 'connected' && state !== 'disconnected') throw new Error('数据连接状态不合法');
+  setDataMode('external'); telemetry.freshness.setConnection(state); linkFreshness.setConnection(state); updateRuntime();
+}
+function getDataStatus(): RuntimeDataStatus {
+  return { nodes: Object.fromEntries(deviceNodes().map(node => [node.id, runtimeFreshness(node)])), links: telemetry.mode === 'external' ? linkFreshness.snapshot(graph.getEdges().map(edge => edge.id)) : Object.fromEntries(graph.getEdges().map(edge => [edge.id, { phase: 'snapshot', receivedAt: lastUpdate.getTime() }])), connection: telemetry.freshness.connection, staleAfterMs: telemetry.freshness.staleAfterMs, mode: telemetry.mode === 'simulation' ? 'simulation' : 'live' };
+}
+function scheduleFreshness() {
+  clearTimeout(freshnessTimer); if (telemetry.mode !== 'external') return;
+  const delays = [telemetry.freshness.nextDelay(), linkFreshness.nextDelay()].filter((value): value is number => value !== null);
+  if (delays.length) freshnessTimer = setTimeout(updateRuntime, Math.min(...delays));
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && telemetry.mode === 'external') updateRuntime(); });
 
 $('#data-mode').addEventListener('change', (event) => setDataMode((event.target as HTMLSelectElement).value as EditorDataMode));
 
@@ -541,7 +576,7 @@ function renderInspector() {
     const target = graph.getCellById(edge.getTargetCellId()) as Node;
     panel.innerHTML = `
       <div class="inspector-header"><span>链路详情</span>${button('deselect', '关闭详情', 'X')}</div>
-      <div class="detail-identity"><span class="detail-device-icon" style="color:${linkTypes[kind].color}">${icon('Cable', 27)}</span><h3>${esc(edge.getData()?.label || linkTypes[kind].label)}</h3><span class="type-caption">${linkTypes[kind].label} / ${linkTypes[kind].short}</span><span class="link-status-badge" id="edge-runtime-status"></span><p class="link-id">链路 ID：${esc(edge.id)}</p></div>
+      <div class="detail-identity"><span class="detail-device-icon" style="color:${linkTypes[kind].color}">${icon('Cable', 27)}</span><h3>${esc(edge.getData()?.label || linkTypes[kind].label)}</h3><span class="type-caption">${linkTypes[kind].label} / ${linkTypes[kind].short}</span><span class="link-status-badge" id="edge-runtime-status"></span><p class="link-id">链路 ID：${esc(edge.id)}</p><p class="runtime-received" id="link-received" data-received-label></p></div>
       <div class="detail-section"><h4>连接端点</h4>
         <div class="endpoint"><span class="tiny-dot green"></span><div><strong>${esc(source.getData<DeviceData>().title)}</strong><small>${esc(edge.getSourcePortId().toUpperCase())}</small></div></div><div class="endpoint-line"></div>
         <div class="endpoint"><span class="tiny-dot green"></span><div><strong>${esc(target.getData<DeviceData>().title)}</strong><small>${esc(edge.getTargetPortId().toUpperCase())}</small></div></div>
@@ -561,9 +596,10 @@ function renderInspector() {
   const def = devices[data.kind];
   const status = runtimeStatus(node);
   const connected = graph.getConnectedEdges(node) || [];
-  panel.innerHTML = `<div class="inspector-header"><span>${mode === 'edit' ? '节点属性' : '节点详情'}</span>${button('deselect', '关闭详情', 'X')}</div><div class="detail-identity"><span class="detail-device-icon kind-${data.kind}">${icon(def.icon, 28)}</span><h3>${esc(data.title)}</h3><span class="type-caption">${esc(def.model)}</span><span class="status-pill ${status}" id="detail-status"><i></i>${esc(runtimeLabel(node))}</span></div>${mode === 'edit' ? `<div class="node-lock-status">${icon(data.locked ? 'LockKeyhole' : 'Move', 14)}<span>${data.locked ? '位置已锁定' : groupOf(snapshot(), node.id)?.locked ? '所属区域已锁定' : '位置可编辑'}</span><button data-action="toggle-node-lock">${data.locked ? '解锁' : '锁定'}</button></div>` : ''}${mode === 'edit' ? `${renderNodeEditor(node, data)}<button class="button danger inspector-bottom-button" data-action="delete">${icon('Trash2', 15)}删除节点及连线</button>` : `${metricDetails(def, (key) => status === 'offline' ? '—' : metricValue(node, key), dataModeLabel())}${renderDevicePorts(node)}<div class="detail-section"><h4>节点信息</h4><div class="detail-info"><div><span>业务对象 ID</span><strong>${esc(data.deviceId)}</strong></div><div><span>管理地址</span><strong>${esc(data.address || '未配置')}</strong></div><div><span>关联链路</span><strong>${connected.length} 条</strong></div></div></div><div class="detail-section"><h4>连接关系</h4><div class="connection-list">${connected.map((edge) => { const other = graph.getCellById(edge.getSourceCellId() === node.id ? edge.getTargetCellId() : edge.getSourceCellId()); return `<button data-select-cell="${esc(edge.id)}"><span style="background:${linkTypes[(edge.getData()?.kind || 'ethernet') as LinkKind].color}"></span>${esc(other?.getData<DeviceData>()?.title || '未连接')}${icon('ChevronRight', 13)}</button>`; }).join('') || '<p class="muted">暂无连接</p>'}</div></div>`}`;
+  panel.innerHTML = `<div class="inspector-header"><span>${mode === 'edit' ? '节点属性' : '节点详情'}</span>${button('deselect', '关闭详情', 'X')}</div><div class="detail-identity"><span class="detail-device-icon kind-${data.kind}">${icon(def.icon, 28)}</span><h3>${esc(data.title)}</h3><span class="type-caption">${esc(def.model)}</span><span class="status-pill ${status}" id="detail-status"><i></i>${esc(runtimeLabel(node))}</span><p class="runtime-received" id="detail-received" data-received-label></p></div>${mode === 'edit' ? `<div class="node-lock-status">${icon(data.locked ? 'LockKeyhole' : 'Move', 14)}<span>${data.locked ? '位置已锁定' : groupOf(snapshot(), node.id)?.locked ? '所属区域已锁定' : '位置可编辑'}</span><button data-action="toggle-node-lock">${data.locked ? '解锁' : '锁定'}</button></div>` : ''}${mode === 'edit' ? `${renderNodeEditor(node, data)}<button class="button danger inspector-bottom-button" data-action="delete">${icon('Trash2', 15)}删除节点及连线</button>` : `${metricDetails(def, (key) => status === 'offline' ? '—' : metricValue(node, key), dataModeLabel())}${renderDevicePorts(node)}<div class="detail-section"><h4>节点信息</h4><div class="detail-info"><div><span>业务对象 ID</span><strong>${esc(data.deviceId)}</strong></div><div><span>管理地址</span><strong>${esc(data.address || '未配置')}</strong></div><div><span>关联链路</span><strong>${connected.length} 条</strong></div></div></div><div class="detail-section"><h4>连接关系</h4><div class="connection-list">${connected.map((edge) => { const other = graph.getCellById(edge.getSourceCellId() === node.id ? edge.getTargetCellId() : edge.getSourceCellId()); return `<button data-select-cell="${esc(edge.id)}"><span style="background:${linkTypes[(edge.getData()?.kind || 'ethernet') as LinkKind].color}"></span>${esc(other?.getData<DeviceData>()?.title || '未连接')}${icon('ChevronRight', 13)}</button>`; }).join('') || '<p class="muted">暂无连接</p>'}</div></div>`}`;
   const badge = document.querySelector<HTMLElement>('#detail-status');
-  if (badge) updateStatusBadge(badge, status, telemetry.mode === 'external' && !values.has(node.id), runtimeLabel(node));
+  if (badge) updateStatusBadge(badge, status, runtimePending(node), runtimeLabel(node), runtimeFreshness(node).phase);
+  const received = document.querySelector<HTMLElement>('#detail-received'); if (received) updateEditorReceivedState(received, runtimeFreshness(node));
   updateTrend();
 }
 
@@ -579,14 +615,16 @@ function updateCounts() {
 }
 
 function updateRuntime() {
+  const cards = new Map([...$('#graph').querySelectorAll<HTMLElement>('[data-device-node]')].map(card => [card.dataset.deviceNode, card]));
   deviceNodes().forEach((node, index) => {
     const data = node.getData<DeviceData>();
     const def = devices[data.kind];
     const status = runtimeStatus(node);
     telemetry.sample(node.id, def, status, tick, index, paused);
-    const card = [...$('#graph').querySelectorAll<HTMLElement>('[data-device-node]')].find((el) => el.dataset.deviceNode === node.id);
+    const card = cards.get(node.id);
     if (card) {
-      updateNodeStatus(card, status, telemetry.mode === 'external' && !values.has(node.id), runtimeLabel(node));
+      updateNodeStatus(card, status, runtimePending(node), runtimeLabel(node), runtimeFreshness(node).phase);
+      updateEditorReceivedState(card, runtimeFreshness(node));
       card.querySelectorAll<HTMLElement>('[data-metric]').forEach((el) => {
         const m = def.metrics.find((entry) => entry.key === el.dataset.metric)!;
         el.innerHTML = metricValueHtml(status === 'offline' ? '—' : metricValue(node, m.key), m.unit);
@@ -595,7 +633,8 @@ function updateRuntime() {
     if (selected?.id === node.id) {
       document.querySelectorAll<HTMLElement>('[data-detail-metric]').forEach((el) => { const m = def.metrics.find((entry) => entry.key === el.dataset.detailMetric)!; el.innerHTML = metricValueHtml(status === 'offline' ? '—' : metricValue(node, m.key), m.unit); });
       const badge = document.querySelector<HTMLElement>('#detail-status');
-      if (badge) updateStatusBadge(badge, status, telemetry.mode === 'external' && !values.has(node.id), runtimeLabel(node));
+      if (badge) updateStatusBadge(badge, status, runtimePending(node), runtimeLabel(node), runtimeFreshness(node).phase);
+      const received = document.querySelector<HTMLElement>('#detail-received'); if (received) updateEditorReceivedState(received, runtimeFreshness(node));
     }
   });
   graph.getEdges().forEach((edge) => {
@@ -603,6 +642,7 @@ function updateRuntime() {
     renderCable(edge);
   });
   updateTrend(); updateCounts();
+  scheduleFreshness(); syncDataControls();
   $('#update-time').textContent = telemetry.mode === 'external' && !values.size ? '等待宿主数据' : `${telemetry.mode === 'external' ? '宿主数据更新' : paused ? '已暂停 · 最后采样' : '数据更新'} ${time(lastUpdate)}`;
 }
 function updateTrend() {
@@ -611,7 +651,7 @@ function updateTrend() {
   const metric = devices[node.getData<DeviceData>().kind].metrics[0];
   if (!metric) return;
   const history = historyValues.get(node.id) || [];
-  if (history.length < 2 || runtimeStatus(node) === 'offline') { $('#trend-line').setAttribute('d', ''); $('#trend-area').setAttribute('d', ''); return; }
+  if (history.length < 2 || runtimeStatus(node) === 'offline' || (telemetry.mode === 'external' && isUnavailable(runtimeFreshness(node)))) { $('#trend-line').setAttribute('d', ''); $('#trend-area').setAttribute('d', ''); return; }
   const padding = Math.max((Math.max(...history) - Math.min(...history)) * .1, .1);
   const low = Math.min(...history) - padding, high = Math.max(...history) + padding;
   const points = history.map((v, i) => `${i / (history.length - 1) * 210},${44 - (v - low) / (high - low) * 36}`);
@@ -1026,14 +1066,14 @@ function captureExportState(): ExportState {
   return Object.fromEntries(deviceNodes().map((node) => {
     const data = node.getData<DeviceData>();
     const status = runtimeStatus(node);
-    return [node.id, { status, pending: telemetry.mode === 'external' && !values.has(node.id), values: Object.fromEntries(devices[data.kind].metrics.flatMap((m) => {
+    return [node.id, { status, pending: runtimePending(node), freshness: runtimeFreshness(node).phase, receivedAt: runtimeFreshness(node).receivedAt, values: Object.fromEntries(devices[data.kind].metrics.flatMap((m) => {
       const value = values.get(node.id)?.[m.key] ?? (telemetry.mode === 'simulation' ? m.base : undefined);
       return value === undefined ? [] : [[m.key, value]];
     })), label: runtimeLabel(node) }];
   }));
 }
 function captureLinkState(): LinkTelemetryData {
-  return Object.fromEntries(graph.getEdges().map(edge => { const state = runtimeLinkState(edge); return [edge.id, { status: state.status, active: state.active }]; }));
+  return Object.fromEntries(graph.getEdges().map(edge => { const state = runtimeLinkState(edge); return [edge.id, { status: state.status, ...(state.status === 'up' ? { active: state.active } : {}) }]; }));
 }
 
 let exporting = false;
@@ -1048,7 +1088,7 @@ async function exportTopology(format: 'json' | 'svg' | 'png' | 'html') {
     const definition = captureDocument(), state = captureExportState(), links = captureLinkState();
     let blob: Blob;
     if (format === 'json') blob = new Blob([JSON.stringify(definition, null, 2)], { type: 'application/json' });
-    else if (format === 'html') blob = new Blob([await standaloneHtml(definition, state, links)], { type: 'text/html;charset=utf-8' });
+    else if (format === 'html') blob = new Blob([await standaloneHtml(definition, state, links, getDataStatus())], { type: 'text/html;charset=utf-8' });
     else {
       const image = graphSvg(graph, definition, state, links);
       blob = format === 'svg' ? new Blob([image.svg], { type: 'image/svg+xml;charset=utf-8' }) : await svgToPng(image);
@@ -1151,6 +1191,17 @@ const actions: Record<string, () => void> = {
       }
       showLibrary();
     } catch (error) { storageFailure(error); toast(storageError, true); }
+  },
+  'data-settings': () => showModal('数据接入设置', `<p class="modal-description">宿主数据按节点、链路分别计时。过期时隐藏参数并停止流转；重连后需收到新数据才恢复。设置仅作用于当前页面，不写入拓扑文件。</p><label class="field">无新数据超时（秒，0 表示关闭）<input id="freshness-seconds" type="number" min="0" max="86400" step="0.1" value="${telemetry.freshness.staleAfterMs / 1000}" /></label><label class="field">数据连接状态<select id="freshness-connection"><option value="connected" ${telemetry.freshness.connection === 'connected' ? 'selected' : ''}>已连接</option><option value="disconnected" ${telemetry.freshness.connection === 'disconnected' ? 'selected' : ''}>已中断</option></select></label><button class="button primary" data-action="apply-data-settings">应用接入设置</button>`),
+  'apply-data-settings': () => {
+    clearFieldErrors($('#modal-content'));
+    try {
+      if (!$<HTMLInputElement>('#freshness-seconds').value.trim()) throw new Error('请填写超时秒数，0 表示关闭');
+      configureFreshness({ staleAfterMs: Number($<HTMLInputElement>('#freshness-seconds').value) * 1000 });
+      const state = $<HTMLSelectElement>('#freshness-connection').value as ConnectionState;
+      if (state !== telemetry.freshness.connection) setConnectionState(state);
+      $<HTMLDialogElement>('#modal').close(); toast('数据接入设置已应用');
+    } catch (error) { showFieldError('freshness-seconds', error instanceof Error ? error.message : '设置不合法'); }
   },
   'new-template': () => showTemplateEditor(),
   'manage-templates': showTemplateManager,
@@ -1438,16 +1489,16 @@ openDocument(library.activeId);
 setInterval(() => { if (paused || telemetry.mode !== 'simulation') return; tick++; lastUpdate = new Date(); updateRuntime(); }, 2000);
 
 // A stable interface for integration and browser verification; telemetry never changes layout.
-declare global { interface Window { stationPrototype: { graph: Graph; snapshot: typeof snapshot; setDataMode: typeof setDataMode; getDataMode: () => EditorDataMode; updateTelemetry: (deviceId: string, metrics: Record<string, number>, status?: DeviceStatus) => number; updateLinkTelemetry: (linkId: string, status: LinkStatus, active?: boolean) => number } } }
+declare global { interface Window { stationPrototype: { graph: Graph; snapshot: typeof snapshot; setDataMode: typeof setDataMode; getDataMode: () => EditorDataMode; configureFreshness: typeof configureFreshness; setConnectionState: typeof setConnectionState; getDataStatus: typeof getDataStatus; updateTelemetry: (deviceId: string, metrics: Record<string, number>, status?: DeviceStatus) => number; updateLinkTelemetry: (linkId: string, status: LinkStatus, active?: boolean) => number } } }
 window.stationPrototype = {
-  graph, snapshot, setDataMode, getDataMode: () => telemetry.mode,
+  graph, snapshot, setDataMode, configureFreshness, setConnectionState, getDataStatus, getDataMode: () => telemetry.mode,
   updateLinkTelemetry(linkId, status, active) {
     const checked = parseLinkData({ [linkId]: { status, ...(active === undefined ? {} : { active }) } });
     const edge = graph.getCellById(linkId);
     if (!edge?.isEdge()) return 0;
     const changed = telemetry.setMode('external');
-    if (changed) { paused = false; linkData = {}; resetOutage(); }
-    linkData = { ...linkData, ...checked };
+    if (changed) { paused = false; linkData = {}; linkFreshness.clear(); resetOutage(); }
+    linkData = { ...linkData, ...checked }; linkFreshness.receive([linkId]);
     lastUpdate = new Date(); updateRuntime(); syncDataControls();
     if (changed) { renderSidebar(); if (mode === 'monitor') renderInspector(); }
     return 1;
@@ -1457,7 +1508,7 @@ window.stationPrototype = {
     const previousMode = telemetry.mode;
     const count = telemetry.update(nodes.map((node) => node.id), metrics, status);
     if (!count) return 0;
-    if (previousMode !== telemetry.mode) { paused = false; linkData = {}; resetOutage(); }
+    if (previousMode !== telemetry.mode) { paused = false; linkData = {}; linkFreshness.clear(); resetOutage(); }
     nodes.forEach((node) => telemetry.recordHistory(node.id, devices[node.getData<DeviceData>().kind].metrics[0]?.key, runtimeStatus(node)));
     lastUpdate = new Date(); updateRuntime(); syncDataControls();
     if (previousMode !== telemetry.mode) { renderSidebar(); if (mode === 'monitor') renderInspector(); }

@@ -4,6 +4,7 @@ import { renderTopologySvg, type ExportState, type ExportEdgeGeometry, type SvgE
 import { renderTopologyHtml } from './export-html';
 import runtimeUrl from '../dist-viewer/topology-viewer.umd.js?url';
 import type { LinkTelemetryData } from './link-state';
+import type { RuntimeDataStatus } from './data-freshness';
 
 export function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -50,10 +51,10 @@ export async function svgToPng(image: SvgExport, requestedScale = 2): Promise<Bl
 }
 
 let runtimePromise: Promise<string> | undefined;
-export async function standaloneHtml(definition: TopologyDocument, state: ExportState, linkData?: LinkTelemetryData) {
+export async function standaloneHtml(definition: TopologyDocument, state: ExportState, linkData?: LinkTelemetryData, dataStatus?: RuntimeDataStatus) {
   runtimePromise ??= fetch(runtimeUrl).then((response) => {
     if (!response.ok) throw new Error('展示组件加载失败，请刷新页面后重试');
     return response.text();
   }).catch((error) => { runtimePromise = undefined; throw error; });
-  return renderTopologyHtml(definition, state, await runtimePromise, linkData);
+  return renderTopologyHtml(definition, state, await runtimePromise, linkData, dataStatus);
 }
