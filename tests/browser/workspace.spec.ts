@@ -53,7 +53,7 @@ test('创建自定义节点模板并导出包含模板与数据绑定的通用�
   const download = await downloadPromise;
   const fs = await import('node:fs/promises');
   const document = JSON.parse(await fs.readFile((await download.path())!, 'utf8'));
-  expect(document.format).toBe('topology-document'); expect(document.version).toBe(2);
+  expect(document.format).toBe('topology-document'); expect(document.version).toBe(3);
   expect(document.templates.some((t: { label: string }) => t.label === '电源模块')).toBe(true);
   expect(document.topology.nodes.at(-1).data.binding).toMatchObject({ source: 'sat-power', fields: { voltage: 'power.voltage' } });
 });

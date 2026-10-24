@@ -1,5 +1,6 @@
 import type { IconName } from './icons';
 import { parseCableAppearance, type CableAppearance } from './cables';
+import type { DiagramElement } from './diagram';
 
 export type DeviceKind = string;
 export type LinkKind = 'rf' | 'if' | 'ethernet' | 'logical';
@@ -11,7 +12,7 @@ export interface PortDefinition { id: string; label: string; kind: LinkKind; sid
 export interface DeviceDefinition { label: string; en: string; icon: IconName; model: string; metrics: MetricDefinition[]; ports: PortDefinition[] }
 export interface DeviceRecord { id: string; x: number; y: number; data: DeviceData }
 export interface LinkRecord { id: string; source: { cell: string; port: string }; target: { cell: string; port: string }; kind: LinkKind; label: string; vertices: { x: number; y: number }[]; appearance?: CableAppearance }
-export interface Snapshot { nodes: DeviceRecord[]; edges: LinkRecord[] }
+export interface Snapshot { nodes: DeviceRecord[]; edges: LinkRecord[]; elements?: DiagramElement[]; order?: string[] }
 export interface TopologyFile { version: 1; name: string; savedAt: string; topology: Snapshot }
 
 export const STORAGE_KEY = 'station-x6-topology-v1';

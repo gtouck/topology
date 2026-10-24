@@ -6,6 +6,9 @@ import { resolveNodeData, type TelemetryData } from './runtime-data';
 import { escapeHtml as esc } from './icons';
 import type { DeviceData, DeviceDefinition, DeviceRecord } from './topology';
 import cardStyles from './viewer-cards.css?inline';
+import statusStyles from './node-status.css?inline';
+import { updateNodeStatus } from './node-status-ui';
+import { addDiagramNode, isDeviceNode, syncDrawingLayers } from './diagram-rendering';
 
 export interface TopologyViewerOptions {
   definition: unknown;
@@ -14,13 +17,14 @@ export interface TopologyViewerOptions {
   onNodeClick?: (event: { node: DeviceRecord; source: string }) => void;
 }
 
-const styles = `${cardStyles}
+const styles = `${cardStyles}${statusStyles.replaceAll('#graph ', '.topology-viewer ')}
 .topology-viewer{position:relative;width:100%;height:100%;min-height:160px;overflow:hidden;background:#f9fbfa;color:#42584a;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;isolation:isolate}
 .topology-viewer *{box-sizing:border-box}.topology-viewer .tv-canvas{position:absolute;inset:0}
+.topology-viewer .diagram-element{width:100%;height:100%;overflow:hidden}.topology-viewer .diagram-group{pointer-events:none}.topology-viewer .diagram-element svg{display:block;font-family:Arial,"PingFang SC",sans-serif}
 .topology-viewer .x6-port{opacity:0!important;pointer-events:none!important}.topology-viewer .x6-cell-tools{display:none!important}
 .topology-viewer .tv-controls{position:absolute;right:12px;bottom:12px;display:flex;gap:4px;align-items:center;background:#fff;border:1px solid #dfe7dd;border-radius:7px;padding:4px;z-index:2}
-.topology-viewer .tv-controls button{font:inherit;border:0;background:transparent;color:#62805e;padding:5px 8px;cursor:pointer;border-radius:4px}.topology-viewer .tv-controls button:hover{background:#eff5ed}.topology-viewer .tv-controls button:focus-visible{outline:2px solid #468b6c}
-.topology-viewer .tv-controls span{font-size:10px;min-width:32px;text-align:center;color:#8a9c82}
+.topology-viewer .tv-controls button{font:inherit;border:0;background:transparent;color:#7286a6;padding:5px 8px;cursor:pointer;border-radius:4px}.topology-viewer .tv-controls button:hover{background:#eef3fb}.topology-viewer .tv-controls button:focus-visible{outline:2px solid #8eabd6}
+.topology-viewer .tv-controls span{font-size:10px;min-width:32px;text-align:center;color:#8899b2}
 .topology-viewer .tv-empty{position:absolute;inset:0;display:grid;place-items:center;color:#a0b196;font-size:13px;pointer-events:none}
 `;
 
@@ -54,6 +58,7 @@ export class TopologyViewer {
     };
     this.graph.on('scale', () => { const label = this.root.querySelector('.tv-controls span'); if (label) label.textContent = `${Math.round(this.graph.zoom() * 100)}%`; });
     this.graph.on('node:click', ({ node }) => {
+      if (!isDeviceNode(node)) return;
       this.highlight(node.id);
       const record = this.definition.topology.nodes.find((n) => n.id === node.id)!;
       this.options.onNodeClick?.({ node: structuredClone(record), source: this.nodeState(node).source });
@@ -75,11 +80,14 @@ export class TopologyViewer {
     this.graph.clearCells();
     for (const record of definition.topology.nodes) addRenderedNode(this.graph, record, {
       definitions: this.definitions, status: (n) => this.nodeState(n).status,
+      pending: (n) => this.nodeState(n).pending,
       value: (n, key) => this.nodeState(n).values[key], statusLabel: (n) => this.nodeState(n).label,
     });
     for (const edge of definition.topology.edges) this.graph.addEdge({ id: edge.id, shape: 'station-cable', source: edge.source, target: edge.target, vertices: edge.vertices, connector: { name: 'rounded', args: { radius: 8 } }, labels: edgeLabels(edge.label), data: { kind: edge.kind, appearance: edge.appearance }, attrs: cableAttributes(cableAppearance(edge.kind, edge.appearance), false, this.textureId), zIndex: 0 });
+    for (const element of definition.topology.elements || []) addDiagramNode(this.graph, element, () => this.definition.topology);
+    syncDrawingLayers(this.graph, definition.topology);
     this.root.querySelector('.tv-empty')?.remove();
-    if (!definition.topology.nodes.length) { const empty = document.createElement('div'); empty.className = 'tv-empty'; empty.textContent = '这张拓扑还没有节点'; this.root.appendChild(empty); }
+    if (!definition.topology.nodes.length && !definition.topology.elements?.length) { const empty = document.createElement('div'); empty.className = 'tv-empty'; empty.textContent = '这张拓扑还没有内容'; this.root.appendChild(empty); }
     this.root.querySelector('.tv-canvas')!.setAttribute('aria-label', definition.name);
     this.refresh(); cancelAnimationFrame(this.frame); this.frame = requestAnimationFrame(() => this.fit());
   }
@@ -103,14 +111,12 @@ export class TopologyViewer {
   }
 
   private refresh() {
-    this.graph.getNodes().forEach((node) => {
+    this.graph.getNodes().filter(isDeviceNode).forEach((node) => {
       const state = this.nodeState(node);
       const view = this.graph.findViewByCell(node);
       const card = view?.container.querySelector<HTMLElement>('.device-card');
       if (!card) return;
-      card.classList.remove('normal', 'warning', 'offline'); card.classList.add(state.status);
-      card.querySelector('.device-status-text')!.textContent = state.label;
-      card.querySelector('.device-status-dot')!.setAttribute('title', state.label);
+      updateNodeStatus(card, state.status, state.pending, state.label);
       card.querySelectorAll<HTMLElement>('[data-metric]').forEach((el) => {
         const key = el.dataset.metric!;
         const metric = this.definitions[node.getData<DeviceData>().kind].metrics.find((m) => m.key === key)!;

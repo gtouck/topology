@@ -48,6 +48,7 @@ function trimHistory(history: LocalVersion[]) {
 /** Extra editor metadata shares the library's single atomic setItem write. */
 export function parseWorkspace(input: unknown): Workspace {
   const library = parseLibrary(input);
+  const originalDocuments = (input as TopologyLibrary).documents;
   const metadata = (input as Partial<Workspace>).editing;
   if (metadata === undefined) return { ...library, editing: { version: 1, revision: 0, drafts: [], history: [] } };
   if (!metadata || metadata.version !== 1 || !Number.isSafeInteger(metadata.revision) || metadata.revision < 0 || !Array.isArray(metadata.drafts) || metadata.drafts.length > 100 || !Array.isArray(metadata.history) || metadata.history.length > 200) throw new Error('本地草稿或历史格式不合法');
@@ -57,7 +58,11 @@ export function parseWorkspace(input: unknown): Workspace {
     const document = parseDocument(draft.document);
     if (draftIds.has(document.id)) throw new Error('存在重复草稿');
     draftIds.add(document.id);
-    return { document, base: draft.base, savedAt: date(draft.savedAt), checkpointAt: date(draft.checkpointAt || draft.savedAt) };
+    const original = originalDocuments.find((saved) => saved.id === document.id);
+    const migrated = library.documents.find((saved) => saved.id === document.id);
+    // Rebase only a valid old fingerprint. Stale drafts must remain stale after migration.
+    const base = original && migrated && draft.base === fingerprint(original) ? fingerprint(migrated) : draft.base;
+    return { document, base, savedAt: date(draft.savedAt), checkpointAt: date(draft.checkpointAt || draft.savedAt) };
   }).filter((draft) => ids.has(draft.document.id));
   const history = metadata.history.map((entry) => {
     if (!entry || typeof entry.id !== 'string' || !entry.id || entry.id.length > 100 || versionIds.has(entry.id) || !['manual', 'auto', 'before-restore', 'previous'].includes(entry.reason)) throw new Error('历史版本不合法');

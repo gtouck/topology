@@ -1,0 +1,14 @@
+/* Node semantic colors are shared by the editor and viewer, independent of tool chrome. */
+/* Positioned/layered HTML inside SVG foreignObject paints at (0,0) in WebKit.
+   Draw the rail as a background and keep card content in normal/grid flow. */
+#graph .device-card[data-status],.topology-viewer .device-card[data-status]{position:static;transition:none;border-color:var(--device-state-border);background:linear-gradient(var(--device-state-color),var(--device-state-color)) left center / 3px calc(100% - 14px) no-repeat var(--device-state-surface);color:#42584a}
+#graph .device-card[data-status="offline"],.topology-viewer .device-card[data-status="offline"]{border-style:dashed;color:#8797a1}
+#graph .device-card[data-status="pending"],.topology-viewer .device-card[data-status="pending"]{border-style:dotted}
+#graph .device-glyph>svg,#graph .device-glyph>.device-lock-indicator,.topology-viewer .device-glyph>svg{grid-area:1/1}
+#graph .device-card[data-status] .device-status-dot,.topology-viewer .device-card[data-status] .device-status-dot{display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;margin-left:auto;border-radius:5px;background:var(--device-state-background);color:var(--device-state-color);box-shadow:none;flex-shrink:0}
+#graph .device-card[data-status] .device-status-dot svg,.topology-viewer .device-card[data-status] .device-status-dot svg{display:block}
+#graph .device-card[data-status] .device-bottom,.topology-viewer .device-card[data-status] .device-bottom{background:var(--device-state-background);border-top-color:var(--device-state-border);color:var(--device-state-color)}
+#graph .device-card[data-status] .device-status-text,.topology-viewer .device-card[data-status] .device-status-text{font-size:8px;font-weight:550;max-width:106px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--device-state-color)}
+#graph .device-card[data-status="pending"] .device-glyph,.topology-viewer .device-card[data-status="pending"] .device-glyph{color:#7297bd;background:#edf4fb}
+#graph .device-card[data-status="pending"] .device-card-heading strong,.topology-viewer .device-card[data-status="pending"] .device-card-heading strong{color:#536c82}
+#graph .device-card[data-status].selected,.topology-viewer .device-card[data-status].selected{border-color:var(--device-state-color);box-shadow:0 0 0 2px #5277b32b,0 3px 10px #344a6310}

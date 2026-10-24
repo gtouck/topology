@@ -1,5 +1,6 @@
 import { iconNames, type IconName } from './icons';
 import { builtinDevices, devices, initialTopology, newDevice, parseDevicePorts, parseTopologyFile, type DeviceDefinition, type DeviceKind, type PortDefinition, type Snapshot } from './topology';
+import { parseDiagram } from './diagram';
 
 export interface NodeTemplate {
   id: string; version: 1; label: string; en: string; icon: IconName; model: string;
@@ -7,7 +8,7 @@ export interface NodeTemplate {
   ports: PortDefinition[];
 }
 export interface TopologyDocument {
-  format: 'topology-document'; version: 2; id: string; name: string; description: string;
+  format: 'topology-document'; version: 3; id: string; name: string; description: string;
   category: string; createdAt: string; updatedAt: string; templates: NodeTemplate[]; topology: Snapshot;
 }
 export const categories = { general: '通用拓扑', 'ground-station': '地面站', datacenter: '机房网络', satellite: '卫星逻辑' };
@@ -64,7 +65,7 @@ export function installEditorTemplates(document: TopologyDocument) {
 
 export function createDocument(name: string, category = 'general', topology: Snapshot = { nodes: [], edges: [] }, definitions = builtinDevices): TopologyDocument {
   const now = new Date().toISOString();
-  return { format: 'topology-document', version: 2, id: newId(), name: name.trim() || '未命名拓扑', description: '', category, createdAt: now, updatedAt: now, templates: templatesFromDefinitions(definitions), topology: structuredClone(topology) };
+  return { format: 'topology-document', version: 3, id: newId(), name: name.trim() || '未命名拓扑', description: '', category, createdAt: now, updatedAt: now, templates: templatesFromDefinitions(definitions), topology: structuredClone(topology) };
 }
 
 /** Pure validation and migration: never changes the active editor's template registry. */
@@ -81,7 +82,7 @@ export function parseDocument(input: unknown): TopologyDocument {
     return migrated;
   }
   const doc = input as TopologyDocument;
-  if (doc.format !== 'topology-document' || doc.version !== 2) throw new Error('不支持的拓扑文档版本');
+  if (doc.format !== 'topology-document' || (record.version !== 2 && record.version !== 3)) throw new Error('不支持的拓扑文档版本');
   if (!Array.isArray(doc.templates) || !doc.templates.length || doc.templates.length > 64) throw new Error('文档需包含 1–64 个节点模板');
   const templates = doc.templates.map(parseTemplate);
   if (new Set(templates.map((t) => t.id)).size !== templates.length) throw new Error('存在重复模板 ID');
@@ -89,7 +90,8 @@ export function parseDocument(input: unknown): TopologyDocument {
   const topology = parseTopologyFile({ version: 1, name: doc.name, savedAt: doc.updatedAt, topology: doc.topology }, definitions).topology;
   for (const node of topology.nodes) safeId(node.id, '节点 ID');
   for (const edge of topology.edges) safeId(edge.id, '连线 ID');
-  return { format: 'topology-document', version: 2, id: safeId(doc.id, '文档 ID'), name: text(doc.name, 100, '文档名称'), description: text(doc.description, 1000, '文档说明', true), category: text(doc.category, 60, '文档分类'), createdAt: date(doc.createdAt), updatedAt: date(doc.updatedAt), templates, topology };
+  if (record.version === 3) Object.assign(topology, parseDiagram(doc.topology, topology));
+  return { format: 'topology-document', version: 3, id: safeId(doc.id, '文档 ID'), name: text(doc.name, 100, '文档名称'), description: text(doc.description, 1000, '文档说明', true), category: text(doc.category, 60, '文档分类'), createdAt: date(doc.createdAt), updatedAt: date(doc.updatedAt), templates, topology };
 }
 
 export function sampleDocument(category: string, name?: string): TopologyDocument {

@@ -3,13 +3,13 @@ import { createDocument, parseDocument, parseTemplate, sampleDocument, definitio
 import { builtinDevices, devices, deviceGeometry, initialTopology } from '../src/topology';
 import { resolveNodeData, readField } from '../src/runtime-data';
 
-describe('通用文档 v2', () => {
+describe('通用文档 v3', () => {
   test('所有场景均可脱离活动模板注册表往返解析', () => {
     const registryBefore = JSON.stringify(devices);
     for (const category of ['general', 'ground-station', 'datacenter', 'satellite']) {
       const doc = sampleDocument(category);
       expect(parseDocument(JSON.parse(JSON.stringify(doc)))).toEqual(doc);
-      expect(doc.version).toBe(2);
+      expect(doc.version).toBe(3);
     }
     expect(JSON.stringify(devices)).toBe(registryBefore);
   });

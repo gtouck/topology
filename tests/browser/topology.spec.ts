@@ -49,7 +49,7 @@ test('离线演示更新状态与链路，不写入拓扑配置', async ({ page 
   await page.locator('[data-action="outage"]').click();
   await expect(page.locator('[data-device-node="srv-01"]')).toHaveClass(/offline/);
   await expect(page.locator('#stat-total')).toHaveText('8');
-  await expect(page.locator('#stat-alarms')).toHaveText('2');
+  await expect(page.locator('[data-device-node="srv-01"]')).toHaveAttribute('data-status', 'offline');
   await expect(page.locator('[data-device-node="srv-01"] [data-metric="cpu"]')).toHaveText('—');
   expect(await snapshot(page)).toEqual(before);
   await page.locator('[data-action="outage"]').click();

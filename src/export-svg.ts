@@ -1,7 +1,10 @@
 import { definitionsFromTemplates, type TopologyDocument } from './document';
-import { deviceGeometry, statusLabels, type DeviceStatus } from './topology';
+import { deviceGeometry, type DeviceStatus } from './topology';
 import { cableAppearance, cableAttributes } from './cables';
 import { escapeHtml, vectorIcon } from './icons';
+import { drawingOrder } from './diagram';
+import { diagramSvg } from './diagram-svg';
+import { nodeStatus, statusGlyph } from './node-status';
 
 export interface ExportNodeState { status: DeviceStatus; values: Record<string, number>; label?: string; pending?: boolean }
 export type ExportState = Record<string, ExportNodeState>;
@@ -57,7 +60,7 @@ function midpoint(points: Point[]) {
 
 /** No foreignObject, external fonts, images, stylesheets or editing controls. */
 export function renderTopologySvg(document: TopologyDocument, state: ExportState = {}, renderedEdges: Record<string, ExportEdgeGeometry> = {}): SvgExport {
-  if (!document.topology.nodes.length) throw new Error('请先添加节点再导出图片');
+  if (!document.topology.nodes.length && !document.topology.elements?.length) throw new Error('请先添加节点再导出图片');
   const definitions = definitionsFromTemplates(document.templates);
   const nodes = new Map(document.topology.nodes.map((node) => [node.id, { ...node, geometry: deviceGeometry(node.data, definitions) }]));
   const bounds: Point[] = [];
@@ -73,7 +76,7 @@ export function renderTopologySvg(document: TopologyDocument, state: ExportState
     const current = renderedEdges[edge.id];
     const path = current?.path || roundedPath(points);
     const center = current?.label || midpoint(points);
-    const offline = [edge.source, edge.target].some((end) => (state[end.cell]?.status || nodes.get(end.cell)!.data.status) === 'offline');
+    const offline = [edge.source, edge.target].some((end) => state[end.cell]?.pending || (state[end.cell]?.status || nodes.get(end.cell)!.data.status) === 'offline');
     const appearance = cableAppearance(edge.kind, edge.appearance);
     const layers = cableAttributes(appearance, offline, 'export-braid');
     const paths = (['line', 'core', 'texture', 'shine'] as const).map((name) => {
@@ -94,13 +97,15 @@ export function renderTopologySvg(document: TopologyDocument, state: ExportState
     }
     return `<g data-edge-id="${esc(edge.id)}" stroke-linecap="round" stroke-linejoin="round">${paths}${arrow}${label}</g>`;
   }).join('');
-  const cards = [...nodes.values()].map((node) => {
+  const cardMarkup = new Map<string, string>();
+  [...nodes.values()].forEach((node) => {
     const { width, height, ports } = node.geometry;
     bounds.push({ x: node.x, y: node.y }, { x: node.x + width, y: node.y + height });
     const def = definitions[node.data.kind], live = state[node.id];
-    const status = live?.status || node.data.status, offline = status === 'offline', warning = status === 'warning';
-    const border = warning ? '#e5d1a6' : '#dce5de', background = offline ? '#f8faf9' : '#fff';
-    const dot = offline ? '#aeb8b2' : warning ? '#caa15f' : '#80b28e';
+    const status = live?.status || node.data.status;
+    const visual = nodeStatus(status, !!live?.pending, live?.label), pending = visual.tone === 'pending';
+    const offline = status === 'offline' || pending, warning = status === 'warning', disconnected = offline && !pending;
+    const border = visual.border, background = visual.surface;
     const title = fitText(node.data.title, width - 84, 12);
     const metrics = node.data.visibleMetrics.map((key, i, all) => {
       const metric = def.metrics.find((m) => m.key === key)!;
@@ -117,13 +122,21 @@ export function renderTopologySvg(document: TopologyDocument, state: ExportState
     const footer = height - 25;
     const capacity = ports.length > 8 ? text(width / 2, (footer + (node.data.visibleMetrics.length ? node.data.visibleMetrics.length === 1 ? 80 : 96 : 57)) / 2 + 4, `${ports.length} 连接端口`, 11, '#93a48d', 'text-anchor="middle"') : '';
     const address = fitText(node.data.address || node.data.deviceId, width - 112, 7);
-    const [glyphColor, glyphBackground] = offline ? ['#a7b2aa', '#f0f3f0'] : glyphs[node.data.kind] || ['#7a986b', '#eff4ed'];
-    return `<g data-node-id="${esc(node.id)}" transform="translate(${number(node.x)} ${number(node.y)})"><title>${esc(node.data.title)}</title><rect width="${width}" height="${height}" rx="8" fill="${background}" stroke="${border}"/><rect x="12" y="13" width="31" height="31" rx="6" fill="${glyphBackground}"/><g transform="translate(18 19)" color="${glyphColor}">${vectorIcon(def.icon)}</g>${text(52, 27, title, 12, offline ? '#99a59e' : '#42584a', 'font-weight="550"')}${text(52, 40, fitText(def.en, width - 80, 7), 7, '#b0bab3', 'letter-spacing="1"')}<circle cx="${width - 15}" cy="28" r="2.5" fill="${dot}"/>${metrics}${capacity}<path d="M1 ${footer}H${width - 1}V${height - 8}Q${width - 1} ${height - 1} ${width - 8} ${height - 1}H8Q1 ${height - 1} 1 ${height - 8}Z" fill="${warning ? '#fffcf5' : offline ? '#f4f6f4' : '#fafcf9'}"/>${text(12, height - 10, fitText(live?.label || statusLabels[status], 99, 7), 7, warning ? '#bb9c60' : '#a0afa2')}${text(width - 12, height - 10, address, 7, '#bac4bb', 'text-anchor="end" font-family="monospace"')}</g>`;
-  }).join('');
+    const [glyphColor, glyphBackground] = pending ? ['#7297bd', '#edf4fb'] : disconnected ? ['#a7b2aa', '#f0f3f0'] : glyphs[node.data.kind] || ['#7a986b', '#eff4ed'];
+    cardMarkup.set(node.id, `<g data-node-id="${esc(node.id)}" data-status="${visual.tone}" transform="translate(${number(node.x)} ${number(node.y)})"><title>${esc(node.data.title)}</title><rect width="${width}" height="${height}" rx="8" fill="${background}" stroke="${border}" stroke-dasharray="${visual.dash}"/><rect x="12" y="13" width="31" height="31" rx="6" fill="${glyphBackground}"/><g transform="translate(18 19)" color="${glyphColor}">${vectorIcon(def.icon)}</g>${text(52, 27, title, 12, pending ? '#536c82' : disconnected ? '#99a59e' : '#42584a', 'font-weight="550"')}${text(52, 40, fitText(def.en, width - 80, 7), 7, '#b0bab3', 'letter-spacing="1"')}<rect x="${width - 29}" y="20" width="17" height="17" rx="5" fill="${visual.background}"/><g transform="translate(${width - 26.5} 22.5)" color="${visual.color}">${statusGlyph(visual.tone, 12)}</g>${metrics}${capacity}<path d="M1 ${footer}H${width - 1}V${height - 8}Q${width - 1} ${height - 1} ${width - 8} ${height - 1}H8Q1 ${height - 1} 1 ${height - 8}Z" fill="${visual.background}"/>${text(12, height - 10, fitText(visual.label, 106, 8), 8, visual.color)}${text(width - 12, height - 10, address, 7, '#bac4bb', 'text-anchor="end" font-family="monospace"')}<path d="M2.5 8V${height - 8}" stroke="${visual.color}" stroke-width="3" stroke-linecap="round"/></g>`);
+  });
+  const elements = new Map((document.topology.elements || []).map((element) => {
+    bounds.push({ x: element.x, y: element.y }, { x: element.x + element.width, y: element.y + element.height });
+    return [element.id, `<g data-element-id="${esc(element.id)}" data-element-kind="${element.kind}" transform="translate(${number(element.x)} ${number(element.y)})">${diagramSvg(element, document.topology)}</g>`];
+  }));
+  const order = drawingOrder(document.topology);
+  const isRegion = (id: string) => document.topology.elements?.some((element) => element.id === id && element.kind === 'group');
+  const regions = order.filter(isRegion).map((id) => elements.get(id)).join('');
+  const cards = order.filter((id) => !isRegion(id)).map((id) => cardMarkup.get(id) || elements.get(id) || '').join('');
   let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
   for (const p of bounds) { left = Math.min(left, p.x); top = Math.min(top, p.y); right = Math.max(right, p.x); bottom = Math.max(bottom, p.y); }
   const minX = Math.floor(left - 40), minY = Math.floor(top - 40);
   const width = Math.ceil(right - minX + 40), height = Math.ceil(bottom - minY + 40);
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="${minX} ${minY} ${width} ${height}" role="img" aria-label="${esc(document.name)}"><title>${esc(document.name)}</title><defs>${defs.join('')}</defs><rect x="${minX}" y="${minY}" width="${width}" height="${height}" fill="#f9fbfa"/><g font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif">${cables}${cards}</g></svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="${minX} ${minY} ${width} ${height}" role="img" aria-label="${esc(document.name)}"><title>${esc(document.name)}</title><defs>${defs.join('')}</defs><rect x="${minX}" y="${minY}" width="${width}" height="${height}" fill="#f9fbfa"/><g font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif">${regions}${cables}${cards}</g></svg>`;
   return { svg, width, height };
 }

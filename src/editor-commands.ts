@@ -1,20 +1,28 @@
 import { newId, parseDocument, type NodeTemplate, type TopologyDocument } from './document';
 import type { Snapshot } from './topology';
+import { drawingOrder, movableSelection, positionLocked, parseDiagram } from './diagram';
 
-export interface TopologyClipboard { nodes: Snapshot['nodes']; edges: Snapshot['edges']; templates: NodeTemplate[] }
+export interface TopologyClipboard { nodes: Snapshot['nodes']; edges: Snapshot['edges']; templates: NodeTemplate[]; elements?: Snapshot['elements']; order?: string[] }
 export interface Offset { x: number; y: number }
 const valid = (n: number) => Number.isFinite(n) && Math.abs(n) <= 100000;
 
 export function copySelection(document: TopologyDocument, selectedIds: Set<string>): TopologyClipboard | null {
-  const nodes = document.topology.nodes.filter((node) => selectedIds.has(node.id));
-  if (!nodes.length) return null;
+  const elements = document.topology.elements?.filter((element) => selectedIds.has(element.id));
+  const included = new Set(selectedIds);
+  elements?.forEach((e) => { if (e.kind === 'group') e.members.forEach((id) => included.add(id)); });
+  const nodes = document.topology.nodes.filter((node) => included.has(node.id));
+  if (!nodes.length && !elements?.length) return null;
   const ids = new Set(nodes.map((node) => node.id)), kinds = new Set(nodes.map((node) => node.data.kind));
-  return structuredClone({ nodes, edges: document.topology.edges.filter((edge) => ids.has(edge.source.cell) && ids.has(edge.target.cell)), templates: document.templates.filter((template) => kinds.has(template.id)) });
+  return structuredClone({ nodes, edges: document.topology.edges.filter((edge) => ids.has(edge.source.cell) && ids.has(edge.target.cell)), templates: document.templates.filter((template) => kinds.has(template.id)), ...(elements?.length ? { elements, order: drawingOrder(document.topology).filter((id) => included.has(id)) } : {}) });
 }
 
 export function moveSelection(snapshot: Snapshot, ids: Set<string>, offset: Offset): Snapshot {
   if (!Number.isFinite(offset.x) || !Number.isFinite(offset.y)) throw new Error('移动距离不合法');
-  return positionNodes(snapshot, new Map(snapshot.nodes.filter((node) => ids.has(node.id) && !node.data.locked).map((node) => [node.id, { x: node.x + offset.x, y: node.y + offset.y }])));
+  const movable = movableSelection(snapshot, ids).ids;
+  const next = positionNodes(snapshot, new Map(snapshot.nodes.filter((node) => movable.has(node.id)).map((node) => [node.id, { x: node.x + offset.x, y: node.y + offset.y }])));
+  for (const element of next.elements || []) if (movable.has(element.id)) { element.x += offset.x; element.y += offset.y; }
+  Object.assign(next, parseDiagram(next, next));
+  return next;
 }
 
 /** Shared layout policy: keep manual bends unless both ends move equally. */
@@ -23,7 +31,7 @@ export function positionNodes(snapshot: Snapshot, positions: ReadonlyMap<string,
   const deltas = new Map<string, Offset>();
   for (const node of next.nodes) {
     const target = positions.get(node.id);
-    if (!target || node.data.locked) continue;
+    if (!target || positionLocked(snapshot, node.id)) continue;
     const dx = target.x - node.x, dy = target.y - node.y;
     if (dx || dy) deltas.set(node.id, { x: dx, y: dy });
     node.x = target.x; node.y = target.y;
@@ -38,9 +46,13 @@ export function positionNodes(snapshot: Snapshot, positions: ReadonlyMap<string,
 
 export function deleteSelection(document: TopologyDocument, ids: Set<string>): TopologyDocument {
   const next = structuredClone(document);
-  const removable = new Set(next.topology.nodes.filter((node) => ids.has(node.id) && !node.data.locked).map((node) => node.id));
+  const removable = new Set(next.topology.nodes.filter((node) => ids.has(node.id) && !positionLocked(next.topology, node.id)).map((node) => node.id));
   next.topology.nodes = next.topology.nodes.filter((node) => !removable.has(node.id));
   next.topology.edges = next.topology.edges.filter((edge) => !ids.has(edge.id) && !removable.has(edge.source.cell) && !removable.has(edge.target.cell));
+  if (next.topology.elements) {
+    next.topology.elements = next.topology.elements.filter((element) => !ids.has(element.id) || element.locked).map((element) => element.kind === 'group' ? { ...element, members: element.members.filter((id) => !removable.has(id)) } : element);
+  }
+  if (next.topology.order) next.topology.order = next.topology.order.filter((id) => next.topology.nodes.some((node) => node.id === id) || next.topology.elements?.some((element) => element.id === id));
   return next;
 }
 
@@ -50,6 +62,7 @@ export function setPositionLocks(document: TopologyDocument, ids: Set<string>, l
     if (locked) node.data.locked = true;
     else delete node.data.locked;
   }
+  for (const element of next.topology.elements || []) if (ids.has(element.id)) { if (locked) element.locked = true; else delete element.locked; }
   return next;
 }
 
@@ -59,10 +72,10 @@ function sameTemplate(a: NodeTemplate, b: NodeTemplate) {
 }
 
 export function pasteSelection(document: TopologyDocument, clipboard: TopologyClipboard, offset: Offset = { x: 40, y: 40 }, idFactory = newId) {
-  if (!clipboard.nodes.length) throw new Error('剪贴板中没有节点');
+  if (!clipboard.nodes.length && !clipboard.elements?.length) throw new Error('剪贴板中没有节点');
   if (document.topology.nodes.length + clipboard.nodes.length > 300 || document.topology.edges.length + clipboard.edges.length > 1000) throw new Error('粘贴后将超过 300 个节点或 1000 条连线的上限');
   const next = structuredClone(document);
-  const used = new Set([...next.topology.nodes, ...next.topology.edges, ...next.templates, ...clipboard.nodes, ...clipboard.edges].map((item) => item.id));
+  const used = new Set([...next.topology.nodes, ...next.topology.edges, ...(next.topology.elements || []), ...next.templates, ...clipboard.nodes, ...clipboard.edges, ...(clipboard.elements || [])].map((item) => item.id));
   const freshId = (prefix: string) => {
     for (let i = 0; i < 100; i++) { const id = idFactory(prefix); if (!used.has(id)) { used.add(id); return id; } }
     throw new Error('无法生成唯一 ID，请重试');
@@ -97,8 +110,17 @@ export function pasteSelection(document: TopologyDocument, clipboard: TopologyCl
     edge.id = freshId('edge'); edge.source.cell = from; edge.target.cell = to;
     return edge;
   });
-  const shifted = moveSelection({ nodes, edges }, new Set(nodes.map((node) => node.id)), offset);
+  const elements = clipboard.elements?.map((source) => {
+    const element = structuredClone(source), id = freshId('element'); idMap.set(source.id, id); element.id = id; delete element.locked;
+    if (element.kind === 'group') element.members = element.members.map((id) => { const member = idMap.get(id); if (!member) throw new Error('剪贴板分组成员不存在'); return member; });
+    return element;
+  });
+  const copiedIds = [...nodes, ...(elements || [])].map((item) => item.id);
+  const shifted = moveSelection({ nodes, edges, ...(elements ? { elements } : {}) }, new Set(copiedIds), offset);
+  const oldOrder = drawingOrder(next.topology);
   next.topology.nodes.push(...shifted.nodes); next.topology.edges.push(...shifted.edges);
+  if (shifted.elements?.length) next.topology.elements = [...(next.topology.elements || []), ...shifted.elements];
+  if (next.topology.order || clipboard.order) next.topology.order = [...oldOrder, ...(clipboard.order?.map((id) => idMap.get(id)!).filter(Boolean) || copiedIds)];
   // Validate the whole result before touching the graph, including imported templates.
-  return { document: parseDocument(next), nodeIds: nodes.map((node) => node.id) };
+  return { document: parseDocument(next), nodeIds: copiedIds };
 }

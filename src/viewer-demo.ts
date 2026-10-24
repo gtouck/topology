@@ -28,7 +28,7 @@ try {
 const viewer = new TopologyViewer(el('#standalone-viewer'), { definition, onNodeClick: ({ node, source }) => { el('#viewer-selection').textContent = JSON.stringify({ nodeId: node.id, title: node.data.title, source }, null, 2); } });
 let second: TopologyViewer | undefined;
 if (new URLSearchParams(location.search).get('instances') === '2') { el('#second-viewer').hidden = false; second = new TopologyViewer(el('#second-viewer'), { definition }); }
-function updateMetadata() { el('#viewer-title').textContent = definition.name; el('#viewer-description').textContent = definition.description || `${definition.topology.nodes.length} 个节点 · ${definition.topology.edges.length} 条连接 · Topology v2`; }
+function updateMetadata() { el('#viewer-title').textContent = definition.name; el('#viewer-description').textContent = definition.description || `${definition.topology.nodes.length} 个节点 · ${definition.topology.edges.length} 条连接 · Topology v3`; }
 updateMetadata();
 el('#apply-viewer-data').onclick = () => {
   try { const data = JSON.parse(el<HTMLTextAreaElement>('#viewer-data').value); viewer.setData(data); el('#viewer-error').textContent = ''; el('#viewer-data-status').textContent = `宿主更新 · ${new Date().toLocaleTimeString()}`; }

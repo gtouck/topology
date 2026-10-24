@@ -1,6 +1,7 @@
 import { definitionsFromTemplates, parseDocument, type TopologyDocument } from './document';
 import { deviceGeometry } from './topology';
 import { positionNodes, type Offset } from './editor-commands';
+import { positionLocked } from './diagram';
 
 export type Alignment = 'left' | 'center-x' | 'right' | 'top' | 'center-y' | 'bottom';
 export type LayoutAxis = 'horizontal' | 'vertical';
@@ -26,10 +27,10 @@ function result(document: TopologyDocument, positions: Map<string, Offset>, skip
 
 export function alignNodes(document: TopologyDocument, ids: Set<string>, alignment: Alignment): LayoutResult {
   if (!Object.hasOwn(alignmentLabels, alignment)) throw new Error('对齐方式不合法');
-  const selected = boxes(document, ids), movable = selected.filter((box) => !box.node.data.locked);
+  const selected = boxes(document, ids), movable = selected.filter((box) => !positionLocked(document.topology, box.node.id));
   if (selected.length < 2) throw new Error('对齐至少需要选择两个节点');
   if (!movable.length) throw new Error('所选节点均已锁定，请先解锁');
-  const locked = selected.find((box) => box.node.data.locked);
+  const locked = selected.find((box) => positionLocked(document.topology, box.node.id));
   const reference = locked ? [locked] : selected;
   const left = Math.min(...reference.map((box) => box.node.x)), top = Math.min(...reference.map((box) => box.node.y));
   const right = Math.max(...reference.map((box) => box.node.x + box.width)), bottom = Math.max(...reference.map((box) => box.node.y + box.height));
@@ -51,7 +52,7 @@ export function distributeNodes(document: TopologyDocument, ids: Set<string>, ax
   if (axis !== 'horizontal' && axis !== 'vertical') throw new Error('分布方向不合法');
   if (requestedGap !== undefined && (!Number.isFinite(requestedGap) || requestedGap < 0 || requestedGap > MAX_LAYOUT_GAP)) throw new Error(`间距必须为 0–${MAX_LAYOUT_GAP} px`);
   const selected = boxes(document, ids), coordinate = axis === 'horizontal' ? 'x' : 'y', size = axis === 'horizontal' ? 'width' : 'height';
-  const movable = selected.filter((box) => !box.node.data.locked).sort((a, b) => a.node[coordinate] - b.node[coordinate]);
+  const movable = selected.filter((box) => !positionLocked(document.topology, box.node.id)).sort((a, b) => a.node[coordinate] - b.node[coordinate]);
   const minimum = requestedGap === undefined ? 3 : 2;
   if (movable.length < minimum) throw new Error(`此分布方式至少需要 ${minimum} 个未锁定节点`);
   const first = movable[0], last = movable.at(-1)!;
