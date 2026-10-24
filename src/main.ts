@@ -1,9 +1,12 @@
 import { Graph, Snapline, Transform, type Node, type Edge, type Cell } from '@antv/x6';
-import { icon, iconNames, escapeHtml as esc } from './icons';
+import { icon, escapeHtml as esc } from './icons';
 import { cableAppearance, cableAttributes, cablePreview, cableStyles, parseCableAppearance, type CableAppearance } from './cables';
 import { PortEditor } from './port-editor';
+import { TemplateEditor } from './template-editor';
+import { applyTemplate, duplicateTemplate, templateFile, importTemplate } from './template-commands';
+import { bindingForm, handleBindingClick, readBindingForm } from './binding-editor';
 import { registerTopologyShapes, addRenderedNode, updateNodeGeometry, edgeLabels, installCableTexture } from './rendering';
-import { categories, newId, parseDocument, sampleDocument, templatesFromDefinitions, definitionsFromTemplates, installEditorTemplates, parseTemplate, type TopologyDocument } from './document';
+import { categories, newId, parseDocument, sampleDocument, templatesFromDefinitions, definitionsFromTemplates, installEditorTemplates, type NodeTemplate, type TopologyDocument } from './document';
 import { LIBRARY_KEY, duplicateDocument, removeDocument, emptyLibrary, type TopologyLibrary } from './library';
 import { WorkspaceStore, WorkspaceConflict, documentSignature, type Workspace, type LocalVersion } from './workspace';
 import { downloadBlob, exportFilename, graphSvg, svgToPng, standaloneHtml } from './exports';
@@ -24,7 +27,7 @@ import { clearFieldErrors, showFieldError } from './ui-forms';
 import { categoryLabel, findDocuments, documentThumbnail, type LibrarySort } from './library-presentation';
 import {
   devices, newDevice, linkTypes, statusLabels,
-  NODE_WIDTH, NODE_HEIGHT, devicePorts, portSides, assertConnectedPortsPreserved, parseDataBinding,
+  NODE_WIDTH, NODE_HEIGHT, devicePorts, portSides, assertConnectedPortsPreserved,
   type DeviceKind, type DeviceData, type DeviceRecord, type LinkKind,
   type LinkRecord, type Snapshot, type DeviceStatus,
 } from './topology';
@@ -33,6 +36,7 @@ import './workbench.css';
 import './node-status.css';
 import './workbench-theme.css';
 import './link-flow.css';
+import './template-editor.css';
 
 type Mode = 'monitor' | 'edit';
 let mode: Mode = 'monitor';
@@ -51,6 +55,7 @@ let redoStack: TopologyDocument[] = [];
 let recordTimer: ReturnType<typeof setTimeout>;
 let toastTimer: ReturnType<typeof setTimeout>;
 let portEditor: PortEditor | null = null;
+let templateEditor: TemplateEditor | null = null;
 let portEditorNode: Node | null = null;
 let library: TopologyLibrary;
 let activeDocument: TopologyDocument;
@@ -340,7 +345,7 @@ function applyHighlight() {
 }
 
 function renderSidebar() {
-  $('#sidebar-content').innerHTML = mode === 'edit' ? `<div class="nav-label">节点模板 <span>点击 / 拖入</span></div><div class="device-library">${Object.entries(devices).map(([kind, def]) => `<button class="library-item" draggable="true" data-device="${esc(kind)}" title="添加${esc(def.label)}" aria-label="添加${esc(def.label)}"><span>${icon(def.icon, 19)}</span><span>${esc(def.label)}<small>${esc(def.en)}</small></span>${icon('Plus', 13)}</button>`).join('')}</div><button class="button template-add" data-action="new-template" aria-label="新建节点模板" title="新建节点模板">${icon('Plus', 14)}<span>新建节点模板</span></button><div class="library-help">连接点可供多条线缆共用。<br>相同类型的连接点可以连接。</div>` : `<div class="nav-label">当前拓扑</div><div class="site-info"><span class="site-info-icon">${icon('Network', 28)}</span><strong>${esc(activeDocument.name)}</strong><p>${esc(categoryLabel(activeDocument.category))}</p><div><span>文件格式</span><b>Topology v3</b></div><div><span>节点模板</span><b>${activeDocument.templates.length} 个</b></div><div><span>数据来源</span><b class="mock-source">${dataModeLabel()}</b></div></div><div class="sidebar-tip"><span>拓扑说明</span><p>${esc(activeDocument.description || '制作、管理和复用你的拓扑。')}</p><button data-action="document-info">拓扑信息 ${icon('ArrowUpRight', 14)}</button></div>`;
+  $('#sidebar-content').innerHTML = mode === 'edit' ? `<div class="nav-label">节点模板 <span>点击 / 拖入</span></div><div class="device-library">${Object.entries(devices).map(([kind, def]) => `<button class="library-item" draggable="true" data-device="${esc(kind)}" title="添加${esc(def.label)}" aria-label="添加${esc(def.label)}"><span>${icon(def.icon, 19)}</span><span>${esc(def.label)}<small>${esc(def.en)}</small></span>${icon('Plus', 13)}</button>`).join('')}</div><button class="button template-add" data-action="new-template" aria-label="新建节点模板" title="新建节点模板">${icon('Plus', 14)}<span>新建节点模板</span></button><button class="button template-add" data-action="manage-templates">${icon('Settings', 14)}管理模板 / 导入</button><div class="library-help">连接点可供多条线缆共用。<br>相同类型的连接点可以连接。</div>` : `<div class="nav-label">当前拓扑</div><div class="site-info"><span class="site-info-icon">${icon('Network', 28)}</span><strong>${esc(activeDocument.name)}</strong><p>${esc(categoryLabel(activeDocument.category))}</p><div><span>文件格式</span><b>Topology v3</b></div><div><span>节点模板</span><b>${activeDocument.templates.length} 个</b></div><div><span>数据来源</span><b class="mock-source">${dataModeLabel()}</b></div></div><div class="sidebar-tip"><span>拓扑说明</span><p>${esc(activeDocument.description || '制作、管理和复用你的拓扑。')}</p><button data-action="document-info">拓扑信息 ${icon('ArrowUpRight', 14)}</button></div>`;
 }
 
 function setMode(next: Mode) {
@@ -622,15 +627,15 @@ function toast(message: string, error = false) {
   toastTimer = setTimeout(() => { el.hidden = true; }, 3500);
 }
 function showModal(title: string, content: string) {
-  portEditor = null; portEditorNode = null;
+  portEditor = null; portEditorNode = null; templateEditor = null;
   const root = $('#modal-content'); root.onclick = null; root.oninput = null; root.onchange = null;
-  $('#modal').classList.remove('port-config-modal', 'library-modal');
+  $('#modal').classList.remove('port-config-modal', 'library-modal', 'template-modal');
   $('.modal-footer').innerHTML = '<button class="button primary" data-action="close-modal">知道了</button>';
   $('#modal-title').textContent = title; $('#modal-content').innerHTML = content;
   const dialog = $<HTMLDialogElement>('#modal'); if (!dialog.open) dialog.showModal();
 }
 $<HTMLDialogElement>('#modal').addEventListener('close', () => {
-  portEditor = null; portEditorNode = null;
+  portEditor = null; portEditorNode = null; templateEditor = null;
   const root = $('#modal-content'); root.onclick = null; root.oninput = null; root.onchange = null;
 });
 function addFromLibrary(kind: DeviceKind, point?: { x: number; y: number }) {
@@ -801,8 +806,42 @@ function handleDocumentAction(action: string, id: string) {
   }
 }
 function renderBindingControls(data: DeviceData) {
-  const binding = data.binding || { source: data.deviceId, fields: Object.fromEntries(devices[data.kind].metrics.map((m) => [m.key, m.key])), statusField: 'status' };
-  return propertySection('binding', '数据绑定 <span>用于独立展示</span>', `<label class="field">绑定源 ID<input id="binding-source" maxlength="100" value="${esc(binding.source)}" /></label><label class="field">参数字段映射（JSON）<textarea id="binding-fields" rows="4">${esc(JSON.stringify(binding.fields, null, 2))}</textarea></label><label class="field">状态字段<input id="binding-status" value="${esc(binding.statusField || '')}" placeholder="例如 status 或 health.state" /></label><label class="field">状态映射（JSON，可留空）<textarea id="binding-status-map" rows="3">${esc(JSON.stringify(binding.statusMap || {}, null, 2))}</textarea></label><p class="field-hint">左侧为模板参数标识，右侧为数据路径。状态支持 normal / warning / offline，也可映射业务状态。</p>`, false, 'binding-fields');
+  return propertySection('binding', '数据绑定 <span>用于独立展示</span>', bindingForm(data, devices[data.kind]), false, 'binding-fields');
+}
+
+function showTemplateEditor(template?: NodeTemplate) {
+  if (mode !== 'edit') return;
+  const initial: NodeTemplate = template || { id: newId('custom'), version: 1, label: '', en: 'CUSTOM', model: '', icon: 'Cpu', metrics: [], ports: Object.entries(portSides).map(([side, label]) => ({ id: side, label, side: side as keyof typeof portSides, kind: 'logical' })) };
+  const nodes = snapshot().nodes.filter(n => n.data.kind === initial.id);
+  const inherited = new Set(nodes.filter(n => n.data.ports === undefined).map(n => n.id));
+  const connected = new Set(snapshot().edges.flatMap(e => [e.source, e.target]).filter(e => inherited.has(e.cell)).map(e => e.port));
+  showModal(template ? '编辑节点模板' : '新建节点模板', '');
+  $('#modal').classList.add('template-modal');
+  $('.modal-footer').innerHTML = '<button class="button" data-action="close-modal">取消</button><button class="button primary" data-action="create-template">应用模板</button>';
+  templateEditor = new TemplateEditor($('#modal-content'), initial, nodes.length, connected);
+}
+function showTemplateManager() {
+  if (mode !== 'edit') return;
+  const document = captureDocument();
+  showModal('管理节点模板', `<div class="template-manager-actions"><button class="button primary" data-action="new-template">新建模板</button><button class="button" data-action="import-template">导入模板文件</button><input hidden type="file" accept=".json,application/json" id="template-import-file"/></div><p class="modal-description">修改会同步当前图的引用节点；复制或导入生成独立模板，不替换原模板。导出文件可在其他拓扑中导入。</p><p id="template-import-error" class="template-import-error" role="alert"></p>${document.templates.map(t => `<div class="template-manager-row"><span><strong>${esc(t.label)}</strong><small>${esc(t.id)} · ${document.topology.nodes.filter(n => n.data.kind === t.id).length} 个节点 · ${t.metrics.length} 个参数</small></span><button class="button" data-template-command="edit" data-template-id="${esc(t.id)}">编辑</button><button class="button" data-template-command="copy" data-template-id="${esc(t.id)}">复制</button><button class="button" data-template-command="export" data-template-id="${esc(t.id)}">导出</button></div>`).join('')}`);
+  $('#modal').classList.add('template-modal');
+  $<HTMLInputElement>('#template-import-file').onchange = async event => {
+    const input = event.target as HTMLInputElement, file = input.files?.[0]; if (!file) return;
+    try {
+      if (file.size > 512 * 1024) throw new Error('模板文件不能超过 512 KB');
+      const template = importTemplate(JSON.parse(await file.text()), captureDocument().templates);
+      showTemplateEditor(template);
+    } catch (error) { $('#template-import-error').textContent = error instanceof Error ? error.message : '模板文件不合法'; }
+    finally { input.value = ''; }
+  };
+}
+function handleTemplateCommand(target: HTMLElement) {
+  const button = target.closest<HTMLElement>('[data-template-command]'); if (!button || mode !== 'edit') return false;
+  const template = captureDocument().templates.find(t => t.id === button.dataset.templateId); if (!template) return true;
+  if (button.dataset.templateCommand === 'edit') showTemplateEditor(template);
+  if (button.dataset.templateCommand === 'copy') showTemplateEditor(duplicateTemplate(template));
+  if (button.dataset.templateCommand === 'export') downloadBlob(new Blob([JSON.stringify(templateFile(template), null, 2)], { type: 'application/json' }), `${template.id}.template.json`);
+  return true;
 }
 
 function executeEditorCommand(document: TopologyDocument, selectIds: string[] = []) {
@@ -1113,23 +1152,19 @@ const actions: Record<string, () => void> = {
       showLibrary();
     } catch (error) { storageFailure(error); toast(storageError, true); }
   },
-  'new-template': () => showModal('新建节点模板', `<label class="field">模板名称<input id="template-name" maxlength="40" placeholder="例如：电源控制模块" /></label><label class="field">图标<select id="template-icon">${iconNames.map((name) => `<option value="${name}" ${name === 'Cpu' ? 'selected' : ''}>${name}</option>`).join('')}</select></label><label class="field">四边连接点类型<select id="template-link">${Object.entries(linkTypes).map(([key, value]) => `<option value="${key}" ${key === 'logical' ? 'selected' : ''}>${value.label}</option>`).join('')}</select></label><label class="field">参数定义：每行“标识,名称,单位,小数位数”<textarea id="template-metrics" rows="5" placeholder="voltage,电压,V,1&#10;load,负载,%,1"></textarea></label><p class="modal-description">可不填写参数。每个模板最多 20 项参数，节点卡片可选择其中最多 2 项。模板随拓扑文件导出。</p><button class="button primary" data-action="create-template">创建模板</button>`),
+  'new-template': () => showTemplateEditor(),
+  'manage-templates': showTemplateManager,
+  'import-template': () => $<HTMLInputElement>('#template-import-file').click(),
   'create-template': () => {
+    if (mode !== 'edit' || !templateEditor) return;
     clearFieldErrors($('#modal-content'));
-    let field = 'template-name';
+    const template = templateEditor.read(); if (!template) return;
     try {
-      const name = $<HTMLInputElement>('#template-name').value.trim();
-      if (!name) { showFieldError('template-name', '请填写模板名称'); return; }
-      const kind = $<HTMLSelectElement>('#template-link').value as LinkKind;
-      field = 'template-metrics';
-      const metrics = $<HTMLTextAreaElement>('#template-metrics').value.split('\n').filter((line) => line.trim()).map((line) => { const [key, label, unit = '', decimals = '1'] = line.split(/[,，]/).map((part) => part.trim()); return { key, label, unit, decimals: Number(decimals) }; });
-      const template = parseTemplate({ id: newId('custom'), version: 1, label: name, en: 'CUSTOM', model: name, icon: $<HTMLSelectElement>('#template-icon').value, metrics, ports: Object.entries(portSides).map(([side, label]) => ({ id: side, label, side, kind })) });
-      if (!saveDraftNow()) return;
-      flushHistory();
-      activeDocument = { ...captureDocument(), templates: [...templatesFromDefinitions(devices), template] };
-      installEditorTemplates(activeDocument); flushHistory(); renderSidebar(); updateDocumentChrome();
-      $<HTMLDialogElement>('#modal').close(); toast('节点模板已加入当前拓扑，可从左侧拖入');
-    } catch (error) { showFieldError(field, error instanceof Error ? error.message : '模板配置不合法'); }
+      const next = applyTemplate(captureDocument(), template);
+      executeEditorCommand(next, selectedCells().map(c => c.id));
+      $<HTMLDialogElement>('#modal').close();
+      toast('模板已应用，引用节点同步更新，可撤销');
+    } catch (error) { showFieldError('template-metrics', error instanceof Error ? error.message : '模板配置不合法'); }
   },
   monitor: () => setMode('monitor'), edit: () => setMode('edit'), deselect: () => selectCell(null),
   fit: fitGraph, 'zoom-in': () => graph.zoom(.1), 'zoom-out': () => graph.zoom(-.1),
@@ -1159,23 +1194,8 @@ const actions: Record<string, () => void> = {
     if (!title) { showFieldError('device-title', '请填写节点名称'); return; }
     if (!deviceId) { showFieldError('device-id', '请填写业务对象 ID'); return; }
     if (visibleMetrics.length > 2) { showFieldError('visible-metrics', '卡片最多展示 2 项参数'); return; }
-    let binding;
-    let bindingField = 'binding-source';
-    try {
-      const source = $<HTMLInputElement>('#binding-source').value.trim();
-      if (!source) { showFieldError('binding-source', '请填写绑定源 ID'); return; }
-      bindingField = 'binding-fields';
-      const fields = JSON.parse($<HTMLTextAreaElement>('#binding-fields').value);
-      // Validate each portion separately so errors identify the relevant field.
-      parseDataBinding({ source, fields }, devices[selected.getData<DeviceData>().kind].metrics.map((m) => m.key));
-      bindingField = 'binding-status';
-      const statusField = $<HTMLInputElement>('#binding-status').value.trim();
-      parseDataBinding({ source, fields, ...(statusField ? { statusField } : {}) }, devices[selected.getData<DeviceData>().kind].metrics.map((m) => m.key));
-      bindingField = 'binding-status-map';
-      const statusMap = JSON.parse($<HTMLTextAreaElement>('#binding-status-map').value || '{}');
-      binding = parseDataBinding({ source, fields, ...(statusField ? { statusField } : {}), statusMap }, devices[selected.getData<DeviceData>().kind].metrics.map((m) => m.key));
-    }
-    catch (error) { showFieldError(bindingField, error instanceof SyntaxError ? 'JSON 格式不正确，请检查引号、逗号和括号' : error instanceof Error ? error.message : '数据绑定不合法'); return; }
+    const binding = readBindingForm($('#inspector'), devices[selected.getData<DeviceData>().kind]);
+    if (!binding) return;
     try {
       let document = captureDocument();
       const record = document.topology.nodes.find((node) => node.id === selected!.id)!;
@@ -1247,6 +1267,8 @@ const actions: Record<string, () => void> = {
 
 document.addEventListener('click', (event) => {
   const target = event.target as HTMLElement;
+  handleBindingClick(target);
+  if (handleTemplateCommand(target)) return;
   const preview = target.closest<HTMLElement>('[data-preview-document]');
   if (preview) { handleDocumentAction('open', preview.dataset.previewDocument!); return; }
   const restore = target.closest<HTMLElement>('[data-restore-version]');

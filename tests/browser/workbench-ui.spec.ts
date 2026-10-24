@@ -46,16 +46,16 @@ test('S05 分区开关在换节点和刷新后保留，错误自动展开并聚�
   await expect(page.locator('#device-title')).toHaveAttribute('aria-invalid', 'true');
   await page.locator('#device-title').fill('手工输入的天线名称');
   const binding = page.locator('.binding-fields'); await binding.locator('summary').click();
-  const original = await page.locator('#binding-fields').inputValue();
-  await page.locator('#binding-fields').fill('{'); await binding.locator('summary').click();
+  const original = await page.locator('#binding-path-0').inputValue();
+  await page.locator('#binding-path-0').fill('forbidden.__proto__.value'); await binding.locator('summary').click();
   await page.locator('[data-action="apply-device"]').click();
   await expect(binding).toHaveAttribute('open', '');
-  await expect(page.locator('#binding-fields')).toBeFocused();
-  await expect(page.locator('#binding-fields-error')).toContainText('JSON');
+  await expect(page.locator('#binding-path-0')).toBeFocused();
+  await expect(page.locator('#binding-path-0-error')).toContainText('字段');
   await expect(page.locator('#device-title')).toHaveValue('手工输入的天线名称');
   expect(await snapshot(page)).toEqual(before);
-  await page.locator('#binding-fields').fill(original); await page.locator('[data-action="apply-device"]').click();
-  await expect(page.locator('#device-title-error, #binding-fields-error')).toHaveCount(0);
+  await page.locator('#binding-path-0').fill(original); await page.locator('[data-action="apply-device"]').click();
+  await expect(page.locator('#device-title-error, #binding-path-0-error')).toHaveCount(0);
   expect((await snapshot(page)).nodes.find((node) => node.id === 'ant-01')!.data.title).toBe('手工输入的天线名称');
   await expect(metrics).not.toHaveAttribute('open', '');
   await page.locator('[data-device-node="lnb-01"]').click(); await expect(metrics).not.toHaveAttribute('open', '');
@@ -81,12 +81,22 @@ test('S05 新建拓扑与模板错误显示在字段旁，不丢失其余输入'
   await page.locator('[data-action="close-modal"]').first().click();
   await page.locator('[data-action="new-template"]').click();
   await page.locator('#template-name').fill('控制模块');
-  await page.locator('#template-metrics').fill('voltage,电压,V,9');
+  await page.locator('[data-template-action="add-metric"]').click();
+  await page.getByLabel('参数标识', { exact: true }).fill('voltage');
+  await page.getByLabel('参数名称', { exact: true }).fill('电压');
+  await page.getByLabel('小数位数', { exact: true }).fill('9');
   await page.locator('[data-action="create-template"]').click();
   await expect(page.locator('#template-metrics-error')).toBeVisible();
   await expect(page.locator('#template-metrics')).toBeFocused();
   await expect(page.locator('#template-name')).toHaveValue('控制模块');
-  await page.locator('#template-metrics').fill('a,参数一,V,1\nb,参数二,V,1\nc,参数三,V,1');
+  await page.getByLabel('参数标识', { exact: true }).fill('a');
+  await page.getByLabel('小数位数', { exact: true }).fill('1');
+  for (const key of ['b', 'c']) {
+    await page.locator('[data-template-action="add-metric"]').click();
+    const row = page.locator('.template-metric-row').last();
+    await row.getByLabel('参数标识', { exact: true }).fill(key);
+    await row.getByLabel('参数名称', { exact: true }).fill('参数' + key);
+  }
   await page.locator('[data-action="create-template"]').click();
   await page.locator('.library-item', { hasText: '控制模块' }).click();
   await page.locator('input[name="visible-metric"][value="c"]').check();

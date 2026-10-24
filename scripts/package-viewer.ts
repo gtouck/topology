@@ -12,8 +12,9 @@ patchDeclarations('dist-viewer/types');
 writeFileSync('dist-viewer/package.json', JSON.stringify({
   name: '@topology-kit/viewer', version: '0.3.0', private: true, type: 'module',
   module: './topology-viewer.js', types: './types/viewer-index.d.ts', unpkg: './topology-viewer.umd.js',
-  exports: { '.': { types: './types/viewer-index.d.ts', import: './topology-viewer.js', default: './topology-viewer.js' }, './schema': './topology-v3.schema.json', './schema/v2': './topology-v2.schema.json' },
+  exports: { '.': { types: './types/viewer-index.d.ts', import: './topology-viewer.js', default: './topology-viewer.js' }, './schema': './topology-v3.schema.json', './schema/v2': './topology-v2.schema.json', './schema/template': './node-template.schema.json' },
 }, null, 2));
 copyFileSync('schema/topology-v3.schema.json', 'dist-viewer/topology-v3.schema.json');
 copyFileSync('schema/topology-v2.schema.json', 'dist-viewer/topology-v2.schema.json');
+copyFileSync('schema/node-template.schema.json', 'dist-viewer/node-template.schema.json');
 copyFileSync('docs/integration.md', 'dist-viewer/README.md');

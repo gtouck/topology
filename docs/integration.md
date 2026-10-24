@@ -159,6 +159,14 @@ v3 连线增加两个可选字段：
 
 高光沿手工路径流动，外皮和编织纹理固定，双线保留中心间隙。系统“减少动态效果”偏好停止播放；宿主也可用 `animations: false` 关闭单实例动画。PNG/SVG 保留静态状态，HTML 保留流转配置、状态快照和相同 API，可在页面调用 `window.topologyViewer.updateLinkData(...)`，同源 iframe 调用方式与设备 API 相同。
 
+## 模板编辑与复用
+
+制作工具通过表单编辑模板参数及端口，并配置每个节点的绑定源、参数字段路径和状态映射。仍使用 v3 的 `templates` 与 `node.data.binding`，宿主无需更改现有数据结构。
+
+模板 ID 为稳定引用。修改模板会同步引用节点，移除参数时删除对应 `visibleMetrics` 和 `binding.fields` 项，新增参数不自动创建字段映射；保留节点身份、位置、业务绑定源和手工拐点。节点自定义端口独立保留。继承模板且已连接的端口不能删除或变更类型；模板操作可撤销。
+
+单模板导出文件为 `{ format: 'topology-node-template', version: 1, template: NodeTemplate }`，Schema 为 `schema/node-template.schema.json`，复用 v3 模板定义。导入同 ID 时创建独立 ID，不覆盖原模板；可在其他拓扑导入并继续修改。此文件是制作工具的模板交换文件，展示组件仍接收完整拓扑文档。包的 `./schema/template` 提供模板 Schema。
+
 ## 状态外观
 
 组件将正常、告警、离线和等待分别以绿色勾选、琥珀色提示、灰色虚线断连、蓝色点线时钟呈现。节点尺寸和端口位置不因状态变化而改变，参数更新不修改定义。

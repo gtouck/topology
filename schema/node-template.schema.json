@@ -1,0 +1,219 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:topology-kit:node-template:v1",
+  "title": "Topology Node Template v1",
+  "type": "object",
+  "required": [
+    "format",
+    "version",
+    "template"
+  ],
+  "properties": {
+    "format": {
+      "const": "topology-node-template"
+    },
+    "version": {
+      "const": 1
+    },
+    "template": {
+      "$ref": "#/$defs/template"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "template": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[\\w.-]+$",
+          "not": {
+            "enum": [
+              "__proto__",
+              "prototype",
+              "constructor"
+            ]
+          }
+        },
+        "version": {
+          "const": 1
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 40,
+          "minLength": 1
+        },
+        "en": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "icon": {
+          "type": "string",
+          "maxLength": 50,
+          "minLength": 1,
+          "enum": [
+            "Activity",
+            "SatelliteDish",
+            "Cpu",
+            "Server",
+            "Router",
+            "Network",
+            "Zap",
+            "LayoutDashboard",
+            "Cable",
+            "ChevronDown",
+            "ArrowUpRight",
+            "Search",
+            "Bell",
+            "Settings",
+            "HelpCircle",
+            "Plus",
+            "Minus",
+            "Maximize",
+            "Scan",
+            "MousePointer2",
+            "Hand",
+            "Undo2",
+            "Redo2",
+            "Save",
+            "Download",
+            "Upload",
+            "Trash2",
+            "X",
+            "Check",
+            "RefreshCw",
+            "Pause",
+            "Play",
+            "LockKeyhole",
+            "PencilRuler",
+            "CircleAlert",
+            "ChevronRight",
+            "CircleCheck",
+            "Clock3",
+            "Unplug",
+            "Info",
+            "Layers",
+            "SlidersHorizontal",
+            "RotateCcw",
+            "Radio",
+            "Move",
+            "ExternalLink"
+          ]
+        },
+        "model": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "metrics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/metric"
+          },
+          "maxItems": 20
+        },
+        "ports": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/port"
+          },
+          "maxItems": 128
+        }
+      },
+      "required": [
+        "id",
+        "version",
+        "label",
+        "en",
+        "icon",
+        "model",
+        "metrics",
+        "ports"
+      ],
+      "additionalProperties": false
+    },
+    "metric": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[\\w.-]+$",
+          "not": {
+            "enum": [
+              "__proto__",
+              "prototype",
+              "constructor"
+            ]
+          }
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 40,
+          "minLength": 1
+        },
+        "unit": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "decimals": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 6
+        }
+      },
+      "required": [
+        "key",
+        "label",
+        "unit",
+        "decimals"
+      ],
+      "additionalProperties": false
+    },
+    "port": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 100,
+          "minLength": 1
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 40,
+          "minLength": 1
+        },
+        "kind": {
+          "enum": [
+            "rf",
+            "if",
+            "ethernet",
+            "logical"
+          ]
+        },
+        "side": {
+          "enum": [
+            "left",
+            "right",
+            "top",
+            "bottom"
+          ]
+        },
+        "offset": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100000
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "kind",
+        "side"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

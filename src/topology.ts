@@ -106,7 +106,8 @@ export function deviceGeometry(data: DeviceData, definitions = devices) {
   // Match the card's content: no metric block, one inline row, or two columns.
   const contentHeight = data.visibleMetrics.length === 0 ? 90 : data.visibleMetrics.length === 1 ? 116 : NODE_HEIGHT;
   const baseHeight = contentHeight + (ports.length > 8 ? 28 : 0);
-  if (data.ports === undefined && data.portSpacing === undefined) {
+  const hasUnpositionedSiblings = ports.some(p => p.offset === undefined && ports.filter(other => other.side === p.side).length > 1);
+  if (data.ports === undefined && data.portSpacing === undefined && !hasUnpositionedSiblings) {
     return { width: NODE_WIDTH, height: baseHeight, ports: ports.map((p) => ({ ...p,
       x: p.side === 'left' ? 0 : p.side === 'right' ? NODE_WIDTH : (p.offset ?? NODE_WIDTH / 2),
       y: p.side === 'top' ? 0 : p.side === 'bottom' ? baseHeight : (p.offset ?? NODE_HEIGHT / 2) * baseHeight / NODE_HEIGHT,
