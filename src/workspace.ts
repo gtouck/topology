@@ -1,5 +1,6 @@
 import { newId, parseDocument, type TopologyDocument } from './document';
 import { LIBRARY_KEY, loadLibrary, parseLibrary, type LibraryStorage, type TopologyLibrary } from './library';
+import { latestPublication, newPublication, parsePublicationState, trimPublications, PublicationConflict, type PublicationState } from './publication';
 
 export const MAX_HISTORY_PER_DOCUMENT = 10;
 export const MAX_HISTORY_TOTAL = 40;
@@ -8,7 +9,7 @@ export const AUTO_CHECKPOINT_MS = 60_000;
 export type VersionReason = 'manual' | 'auto' | 'before-restore' | 'previous';
 export interface Draft { document: TopologyDocument; savedAt: string; checkpointAt: string; base: string }
 export interface LocalVersion { id: string; document: TopologyDocument; savedAt: string; reason: VersionReason }
-export interface Workspace extends TopologyLibrary { editing: { version: 1; revision: number; drafts: Draft[]; history: LocalVersion[] } }
+export interface Workspace extends TopologyLibrary { editing: { version: 2; revision: number; drafts: Draft[]; history: LocalVersion[] }; publishing: PublicationState }
 export class WorkspaceConflict extends Error {
   constructor(message = '其他标签页已修改拓扑库，保存已暂停。请导出当前图后重新读取。') { super(message); }
 }
@@ -49,9 +50,10 @@ function trimHistory(history: LocalVersion[]) {
 export function parseWorkspace(input: unknown): Workspace {
   const library = parseLibrary(input);
   const originalDocuments = (input as TopologyLibrary).documents;
-  const metadata = (input as Partial<Workspace>).editing;
-  if (metadata === undefined) return { ...library, editing: { version: 1, revision: 0, drafts: [], history: [] } };
-  if (!metadata || metadata.version !== 1 || !Number.isSafeInteger(metadata.revision) || metadata.revision < 0 || !Array.isArray(metadata.drafts) || metadata.drafts.length > 100 || !Array.isArray(metadata.history) || metadata.history.length > 200) throw new Error('本地草稿或历史格式不合法');
+  const metadata = (input as { editing?: Omit<Workspace['editing'], 'version'> & { version: number } }).editing;
+  const publishing = parsePublicationState((input as Partial<Workspace>).publishing, new Set(library.documents.map(d => d.id)));
+  if (metadata === undefined) return { ...library, editing: { version: 2, revision: 0, drafts: [], history: [] }, publishing };
+  if (!metadata || (metadata.version !== 1 && metadata.version !== 2) || !Number.isSafeInteger(metadata.revision) || metadata.revision < 0 || !Array.isArray(metadata.drafts) || metadata.drafts.length > 100 || !Array.isArray(metadata.history) || metadata.history.length > 200) throw new Error('本地草稿或历史格式不合法');
   const ids = new Set(library.documents.map((d) => d.id)), draftIds = new Set<string>(), versionIds = new Set<string>();
   const drafts = metadata.drafts.map((draft) => {
     if (!draft || typeof draft.base !== 'string' || draft.base.length > 100) throw new Error('草稿基准不合法');
@@ -69,7 +71,7 @@ export function parseWorkspace(input: unknown): Workspace {
     versionIds.add(entry.id);
     return { id: entry.id, document: parseDocument(entry.document), reason: entry.reason, savedAt: date(entry.savedAt) };
   }).filter((entry) => ids.has(entry.document.id));
-  return { ...library, editing: { version: 1, revision: metadata.revision, drafts, history: trimHistory(history) } };
+  return { ...library, editing: { version: 2, revision: metadata.revision, drafts, history: trimHistory(history) }, publishing };
 }
 
 export function effectiveDocument(workspace: Workspace, id: string) {
@@ -93,6 +95,8 @@ export class WorkspaceStore {
   changedElsewhere() { return this.storage.getItem(LIBRARY_KEY) !== this.expected; }
   document(id: string) { return effectiveDocument(this.state, id); }
   history(id: string) { return structuredClone(this.state.editing.history.filter((entry) => entry.document.id === id)); }
+  publications(id: string) { return structuredClone(this.state.publishing.entries.filter(p => p.documentId === id).sort((a, b) => b.revision - a.revision)); }
+  published(id: string) { return structuredClone(latestPublication(this.state.publishing.entries, id) ?? null); }
 
   private change(edit: (next: Workspace) => void) {
     if (this.changedElsewhere()) throw new WorkspaceConflict();
@@ -170,4 +174,26 @@ export class WorkspaceStore {
   }
 
   discardDraft(id: string) { return this.change((next) => { next.editing.drafts = next.editing.drafts.filter((draft) => draft.document.id !== id); }); }
+
+  publish(input: TopologyDocument, expectedRevision: number, note = '') {
+    const document = parseDocument(input);
+    return this.change(next => {
+      if (!next.documents.some(d => d.id === document.id)) throw new Error('拓扑已删除，无法发布');
+      const previous = latestPublication(next.publishing.entries, document.id);
+      if (!Number.isSafeInteger(expectedRevision) || expectedRevision !== (previous?.revision ?? 0)) throw new PublicationConflict();
+      const publication = newPublication(document, expectedRevision + 1, this.now(), note);
+      next.publishing.entries = trimPublications([publication, ...next.publishing.entries]);
+    });
+  }
+
+  rollbackPublication(documentId: string, publicationId: string, expectedRevision: number, note = '') {
+    return this.change(next => {
+      const previous = latestPublication(next.publishing.entries, documentId);
+      if (!Number.isSafeInteger(expectedRevision) || expectedRevision !== (previous?.revision ?? 0)) throw new PublicationConflict();
+      const target = next.publishing.entries.find(p => p.id === publicationId && p.documentId === documentId);
+      if (!target || !previous) throw new Error('发布版本不存在或已被清理');
+      const publication = newPublication(target.document, previous.revision + 1, this.now(), note || `回滚至 r${target.revision}`, target.id);
+      next.publishing.entries = trimPublications([publication, ...next.publishing.entries]);
+    });
+  }
 }

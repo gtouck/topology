@@ -110,7 +110,7 @@ $('#app').innerHTML = `
     <main>
       <div class="page-heading"><div><h1 id="page-title">拓扑工作台</h1><p id="page-description">制作、管理和复用拓扑文件</p></div><div class="heading-actions"><button class="button" data-action="library">${icon('Layers', 15)}拓扑库</button><div class="mode-switch" role="group" aria-label="界面模式"><button data-action="monitor" class="active">${icon('Activity', 16)}查看</button><button data-action="edit">${icon('PencilRuler', 16)}编辑</button></div><button class="button primary" data-action="save">${icon('Save', 16)}<span>保存布局</span></button></div></div>
       <section class="topology-panel" aria-label="拓扑画布">
-        <div class="panel-heading"><div class="panel-title"><span class="panel-symbol">${icon('Network', 18)}</span><h2>拓扑画布</h2><span class="tag">通用拓扑</span></div><div class="workspace-summary" aria-label="拓扑计数"><span><strong id="stat-total">0</strong> 节点</span><span><strong id="stat-links">0</strong> 链路</span></div><div class="panel-heading-actions"><span id="save-status" class="save-status">${icon('Check', 13)}示例布局</span>${button('import', '导入 JSON', 'Upload')}${button('export-options', '导出拓扑', 'Download')}${button('viewer', '在独立展示页打开', 'ExternalLink')}${button('draft-history', '草稿与历史', 'Clock3')}${button('fullscreen', '全屏查看', 'Maximize')}</div></div>
+        <div class="panel-heading"><div class="panel-title"><span class="panel-symbol">${icon('Network', 18)}</span><h2>拓扑画布</h2><span class="tag">通用拓扑</span></div><div class="workspace-summary" aria-label="拓扑计数"><span><strong id="stat-total">0</strong> 节点</span><span><strong id="stat-links">0</strong> 链路</span></div><div class="panel-heading-actions"><span id="save-status" class="save-status">${icon('Check', 13)}示例布局</span>${button('publication', '发布与版本', 'Upload', '发布')}<span id="publication-label" class="publication-label"></span>${button('import', '导入 JSON', 'Upload')}${button('export-options', '导出拓扑', 'Download')}${button('viewer', '在独立展示页打开', 'ExternalLink')}${button('draft-history', '草稿与历史', 'Clock3')}${button('fullscreen', '全屏查看', 'Maximize')}</div></div>
         <div id="draft-notice" class="draft-notice" hidden><span id="draft-message" role="status"></span><button class="button" data-action="retry-draft">重试保存草稿</button><button class="button" data-action="export-current-backup">导出当前图</button><button class="button" data-action="storage-reload">重新读取</button></div>
         <div class="canvas-toolbar"><div class="link-filters" aria-label="链路筛选">${(Object.entries(linkTypes) as [LinkKind, typeof linkTypes[LinkKind]][]).map(([kind, def]) => `<button data-filter="${kind}" class="filter-chip active" aria-pressed="true"><span style="--link-color:${def.color}"></span>${def.label}</button>`).join('')}</div><div class="toolbar-right"><span class="live-label" id="live-label"><i></i>模拟实时</span><span class="toolbar-separator"></span><select id="data-mode" aria-label="数据模式"><option value="simulation">模拟数据</option><option value="external">宿主数据</option></select>${button('data-settings', '数据接入设置', 'Settings')}${button('pause', '暂停模拟数据', 'Pause')}${button('outage', '模拟节点离线', 'Unplug', '离线演示', 'subtle')}</div></div>
         <div class="selection-toolbar" id="edit-tools" hidden><div class="canvas-tool-switch" role="group" aria-label="画布工具">${button('tool-select', '拖动空白处框选节点', 'MousePointer2', '框选')}${button('tool-pan', '拖动空白处平移画布，Shift 拖动可框选', 'Hand', '平移')}</div><span class="toolbar-separator"></span>${button('undo', '撤销 Ctrl / ⌘ Z', 'Undo2')}${button('redo', '重做 Ctrl / ⌘ Shift Z', 'Redo2')}<span class="toolbar-separator"></span>${button('select-all', '全选图形对象 Ctrl / ⌘ A', 'Scan')}${button('copy', '复制节点及内部连线 Ctrl / ⌘ C', 'Copy')}${button('paste', '粘贴 Ctrl / ⌘ V', 'ClipboardPaste')}${button('duplicate', '复制副本 Ctrl / ⌘ D', 'CopyPlus')}${button('delete', '删除选中对象 Delete', 'Trash2')}<span class="toolbar-separator"></span><select id="align-command" aria-label="节点对齐" title="以首个锁定节点为参照；无锁定节点时以选区边界为参照"><option value="">对齐</option>${Object.entries(alignmentLabels).map(([key, label]) => `<option value="${key}">${label}</option>`).join('')}</select><select id="distribute-command" aria-label="节点分布" title="分布只处理未锁定节点"><option value="">分布</option><option value="horizontal">水平等距</option><option value="vertical">垂直等距</option><option value="gap">指定间距…</option></select>${button('lock-selected', '锁定位置，移动和批量删除会跳过', 'LockKeyhole')}${button('unlock-selected', '解锁所选节点', 'LockKeyholeOpen')}<span class="toolbar-separator"></span>${button('add-group', '将所选节点组成区域；无选择时创建空区域', 'Layers', '分组')}${button('add-note', '添加文字注释', 'PencilRuler', '注释')}${button('add-legend', '添加链路和状态图例', 'Info', '图例')}<select id="layer-command" aria-label="图形层次"><option value="">层次</option><option value="front">置顶</option><option value="back">置底</option></select><span id="selection-count">未选择</span><span class="selection-hint">Ctrl / ⌘ / Shift 点选 · 方向键移动</span></div>
@@ -669,7 +669,7 @@ function toast(message: string, error = false) {
 function showModal(title: string, content: string) {
   portEditor = null; portEditorNode = null; templateEditor = null;
   const root = $('#modal-content'); root.onclick = null; root.oninput = null; root.onchange = null;
-  $('#modal').classList.remove('port-config-modal', 'library-modal', 'template-modal');
+  $('#modal').classList.remove('port-config-modal', 'library-modal', 'template-modal', 'publication-modal');
   $('.modal-footer').innerHTML = '<button class="button primary" data-action="close-modal">知道了</button>';
   $('#modal-title').textContent = title; $('#modal-content').innerHTML = content;
   const dialog = $<HTMLDialogElement>('#modal'); if (!dialog.open) dialog.showModal();
@@ -695,6 +695,7 @@ function captureDocument(): TopologyDocument {
 function adoptWorkspace(state: Workspace) {
   library = { version: 1, activeId: state.activeId, documents: state.documents };
   storageError = ''; storageConflict = false;
+  if (activeDocument) updatePublicationLabel();
 }
 function storageFailure(error: unknown) {
   storageConflict = error instanceof WorkspaceConflict;
@@ -766,6 +767,7 @@ function updateDocumentChrome() {
   $('.panel-title .tag').textContent = categoryLabel(activeDocument.category);
   document.title = `${activeDocument.name} · Topology`;
   document.body.dataset.documentId = activeDocument.id;
+  updatePublicationLabel();
 }
 function documentsForLibrary() {
   return library.documents.map((saved) => {
@@ -794,6 +796,52 @@ function renderLibraryResults() {
 function showDocumentInfo(id: string) {
   const doc = documentsForLibrary().find((d) => d.id === id)!;
   showModal('拓扑信息', `<input type="hidden" id="metadata-document-id" value="${esc(id)}"/><label class="field">名称<input id="metadata-name" maxlength="100" value="${esc(doc.name)}" /></label><label class="field">分类<input id="metadata-category" maxlength="60" value="${esc(doc.category)}" list="document-categories" /></label><datalist id="document-categories">${Object.keys(categories).map((key) => `<option value="${key}">${categoryLabel(key)}</option>`).join('')}</datalist><label class="field">说明<textarea id="metadata-description" maxlength="1000" rows="4">${esc(doc.description)}</textarea></label><p class="modal-description">文件格式：Topology v3<br>文档 ID：${esc(doc.id)}</p><button class="button primary" data-action="apply-document-info">保存信息</button>`);
+}
+function updatePublicationLabel() {
+  const label = document.querySelector<HTMLElement>('#publication-label');
+  if (!label || !activeDocument) return;
+  const current = workspace?.published(activeDocument.id);
+  label.textContent = current ? `r${current.revision}` : '未发布';
+}
+function publicationUrl(id: string, revision?: number, publicationId?: string) {
+  const url = new URL('./viewer.html', location.href); url.searchParams.set('published', id);
+  if (revision !== undefined) url.searchParams.set('revision', String(revision));
+  if (publicationId) url.searchParams.set('publication', publicationId);
+  return url.href;
+}
+function showPublication() {
+  finishGroupDrag(); flushHistory(); saveDraftNow(); if (!workspace) return;
+  const current = workspace.published(activeDocument.id), entries = workspace.publications(activeDocument.id);
+  const changed = !current || documentSignature(current.document) !== documentSignature(captureDocument());
+  showModal('发布与版本', `<p class="modal-description">发布保存在当前浏览器。自动草稿和“保存布局”不影响已发布展示；跨软件使用可导出发布配置或接入宿主存储。</p><div class="publication-summary"><strong>${current ? `当前发布 r${current.revision}` : '尚未发布'}</strong><span>${changed ? '当前草稿含未发布内容' : '草稿与当前发布内容一致'}</span><button class="button" data-action="preview-published" ${current ? '' : 'disabled'}>打开当前发布</button><button class="button" data-action="export-published" ${current ? '' : 'disabled'}>导出发布配置</button></div><input id="publication-expected-revision" type="hidden" value="${current?.revision ?? 0}"/><label class="field">本次发布说明<textarea id="publication-note" maxlength="500" rows="2" placeholder="例如：补充机房业务网连接"></textarea></label><h3>发布历史</h3><p class="field-hint">回滚将创建新的发布版本，不覆盖草稿。每图最多保留 10 版，容量不足时清理较早历史，当前发布始终保留。</p><div class="publication-list">${entries.map(p => `<article class="publication-entry" data-publication-id="${esc(p.id)}"><div><strong>r${p.revision}${current?.id === p.id ? ' · 当前发布' : ''}</strong><time>${esc(new Date(p.publishedAt).toLocaleString('zh-CN'))}</time></div><p>${esc(p.note || '无发布说明')}</p><small>${p.document.topology.nodes.length} 个节点 · ${p.document.topology.edges.length} 条连接${p.rollbackOf ? ` · 回滚来源 ${esc(p.rollbackOf)}` : ''}</small><div class="publication-actions"><button class="button" data-publication-action="preview" data-publication-revision="${p.revision}">查看此版</button><button class="button" data-publication-action="rollback" data-publication-id="${esc(p.id)}" ${p.id === current?.id ? 'disabled' : ''}>回滚到此版</button></div></article>`).join('') || '<p class="muted">还没有发布版本。发布当前配置后，展示入口才能使用。</p>'}</div>`);
+  $('#modal').classList.add('publication-modal');
+  $('.modal-footer').innerHTML = '<button class="button" data-action="close-modal">关闭</button><button class="button primary" data-action="publish-current">发布当前草稿</button>';
+}
+function handlePublicationFailure(error: unknown) {
+  if (error instanceof WorkspaceConflict) storageFailure(error);
+  showFieldError('publication-note', error instanceof Error ? error.message : '发布失败，原发布保持不变');
+}
+function publishCurrent() {
+  if (!workspace) return;
+  clearFieldErrors($('#modal-content')); flushHistory(); if (!saveDraftNow()) { showFieldError('publication-note', storageError || '草稿未能保存，请先导出备份并重试'); return; }
+  try {
+    const expected = Number($<HTMLInputElement>('#publication-expected-revision').value), note = $<HTMLTextAreaElement>('#publication-note').value.trim();
+    adoptWorkspace(workspace.publish(captureDocument(), expected, note));
+    showPublication(); toast('已发布当前草稿，发布展示已切换');
+  } catch (error) { handlePublicationFailure(error); }
+}
+function handlePublicationAction(target: HTMLElement) {
+  const button = target.closest<HTMLButtonElement>('[data-publication-action]');
+  if (!button || button.disabled) return false;
+  if (button.dataset.publicationAction === 'preview') window.open(publicationUrl(activeDocument.id, Number(button.dataset.publicationRevision), button.closest<HTMLElement>('.publication-entry')?.dataset.publicationId), '_blank', 'noopener');
+  if (button.dataset.publicationAction === 'rollback' && workspace) {
+    clearFieldErrors($('#modal-content'));
+    try {
+      adoptWorkspace(workspace.rollbackPublication(activeDocument.id, button.dataset.publicationId!, Number($<HTMLInputElement>('#publication-expected-revision').value)));
+      showPublication(); toast('已创建回滚发布，草稿和编辑历史保留');
+    } catch (error) { handlePublicationFailure(error); }
+  }
+  return true;
 }
 function showDraftHistory() {
   flushHistory(); saveDraftNow();
@@ -1107,6 +1155,13 @@ async function exportTopology(format: 'json' | 'svg' | 'png' | 'html') {
 }
 
 const actions: Record<string, () => void> = {
+  publication: showPublication,
+  'publish-current': publishCurrent,
+  'preview-published': () => { if (workspace?.published(activeDocument.id)) window.open(publicationUrl(activeDocument.id), '_blank', 'noopener'); },
+  'export-published': () => {
+    const publication = workspace?.published(activeDocument.id); if (!publication) return;
+    downloadBlob(new Blob([JSON.stringify(publication.document, null, 2)], { type: 'application/json' }), exportFilename(`${publication.document.name}-r${publication.revision}`, 'topology.json'));
+  },
   'add-group': () => createDiagram('group'),
   'add-note': () => createDiagram('note'),
   'add-legend': () => createDiagram('legend'),
@@ -1319,6 +1374,7 @@ const actions: Record<string, () => void> = {
 document.addEventListener('click', (event) => {
   const target = event.target as HTMLElement;
   handleBindingClick(target);
+  if (handlePublicationAction(target)) return;
   if (handleTemplateCommand(target)) return;
   const preview = target.closest<HTMLElement>('[data-preview-document]');
   if (preview) { handleDocumentAction('open', preview.dataset.previewDocument!); return; }

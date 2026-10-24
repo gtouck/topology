@@ -3,6 +3,7 @@ import { TopologyViewer } from './viewer';
 import { createDocument, parseDocument, sampleDocument, type TopologyDocument } from './document';
 import { LIBRARY_KEY, parseLibrary } from './library';
 import { parseWorkspace, effectiveDocument } from './workspace';
+import { latestPublication, type TopologyPublication } from './publication';
 import type { TelemetryData } from './runtime-data';
 import { parseLinkData } from './link-state';
 import './viewer-demo.css';
@@ -13,9 +14,23 @@ viewer.updateData(patch);
 viewer.destroy();</pre></details></aside></div></main>`;
 const el = <T extends HTMLElement = HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 let definition: TopologyDocument;
+let publication: TopologyPublication | undefined;
+const publishedId = new URLSearchParams(location.search).get('published');
+const fixedRevision = new URLSearchParams(location.search).get('revision');
+const fixedPublication = new URLSearchParams(location.search).get('publication');
+const fixedVersion = fixedRevision !== null || fixedPublication !== null;
+el('.demo-layout').insertAdjacentHTML('beforebegin', '<p id="publication-error" role="alert" hidden></p>');
+function readPublished() {
+  const state = parseWorkspace(JSON.parse(localStorage.getItem(LIBRARY_KEY) || 'null'));
+  const found = !fixedVersion ? latestPublication(state.publishing.entries, publishedId!) : state.publishing.entries.find(p => p.documentId === publishedId && (fixedRevision === null || String(p.revision) === fixedRevision) && (fixedPublication === null || p.id === fixedPublication));
+  if (!found) throw new Error('发布版本不存在或已被清理，请在制作工具中显式发布');
+  return found;
+}
 try {
   const id = new URLSearchParams(location.search).get('document');
-  if (id) {
+  if (publishedId) {
+    document.body.dataset.published = 'true'; publication = readPublished(); definition = publication.document;
+  } else if (id) {
     const raw = JSON.parse(localStorage.getItem(LIBRARY_KEY) || 'null');
     const library = parseLibrary(raw);
     let found = library.documents.find((d) => d.id === id);
@@ -26,12 +41,33 @@ try {
     }
     definition = found;
   } else definition = sampleDocument('datacenter');
-} catch (error) { definition = createDocument('请导入拓扑文件'); el('#viewer-error').textContent = error instanceof Error ? error.message : '读取失败'; }
+} catch (error) {
+  definition = createDocument(publishedId ? '发布版本不可用' : '请导入拓扑文件');
+  const message = error instanceof Error ? error.message : '读取失败'; el('#viewer-error').textContent = message;
+  if (publishedId) { el('#publication-error').hidden = false; el('#publication-error').textContent = message; }
+}
 const viewer = new TopologyViewer(el('#standalone-viewer'), { definition, onNodeClick: ({ node, source }) => { el('#viewer-selection').textContent = JSON.stringify({ nodeId: node.id, title: node.data.title, source }, null, 2); } });
 let second: TopologyViewer | undefined;
 if (new URLSearchParams(location.search).get('instances') === '2') { el('#second-viewer').hidden = false; second = new TopologyViewer(el('#second-viewer'), { definition }); }
-function updateMetadata() { el('#viewer-title').textContent = definition.name; el('#viewer-description').textContent = definition.description || `${definition.topology.nodes.length} 个节点 · ${definition.topology.edges.length} 条连接 · Topology v3`; }
+function updateMetadata() {
+  el('#viewer-title').textContent = definition.name;
+  el('#viewer-description').textContent = publication ? `${!fixedVersion ? '当前发布' : '固定历史版本'} r${publication.revision} · ${new Date(publication.publishedAt).toLocaleString('zh-CN')} · ${publication.note || '无发布说明'}` : definition.description || `${definition.topology.nodes.length} 个节点 · ${definition.topology.edges.length} 条连接 · Topology v3`;
+  if (publication) document.body.dataset.publicationRevision = String(publication.revision);
+}
 updateMetadata();
+window.addEventListener('storage', event => {
+  if (!publishedId || fixedVersion || (event.key !== LIBRARY_KEY && event.key !== null)) return;
+  try {
+    const next = readPublished();
+    if (next.id !== publication?.id) { viewer.setDefinition(next.document); definition = next.document; publication = next; updateMetadata(); el('#viewer-error').textContent = ''; el('#publication-error').hidden = true; }
+  } catch (error) {
+    // A deleted publication must not continue masquerading as the current release.
+    definition = createDocument('发布版本不可用'); viewer.setDefinition(definition); publication = undefined;
+    delete document.body.dataset.publicationRevision; updateMetadata();
+    el('#viewer-data-status').textContent = '发布版本不可用'; el('#viewer-error').textContent = error instanceof Error ? error.message : '读取发布失败';
+    el('#publication-error').hidden = false; el('#publication-error').textContent = el('#viewer-error').textContent;
+  }
+});
 el('#apply-viewer-freshness').onclick = () => {
   try {
     const timeout = el<HTMLInputElement>('#viewer-timeout').value;

@@ -191,7 +191,7 @@ v3 连线增加两个可选字段：
 
 ## v3 图面元素与兼容性
 
-组件包版本为 `0.4.0`，增加运行数据超时及接收状态；通用文件仍为 v3，包的 `./schema` 指向包含链路状态/流转扩展的 v3，`./schema/v2` 保留旧 Schema。`0.1.x` 组件不支持 v3，需配套更新，不能只将文件的版本号改回 2，否则会丢失图面内容。
+组件包版本为 `0.5.0`，支持运行数据超时、接收状态及发布存储接口类型；通用文件仍为 v3，包的 `./schema` 指向包含链路状态/流转扩展的 v3，`./schema/v2` 保留旧 Schema。`0.1.x` 组件不支持 v3，需配套更新，不能只将文件的版本号改回 2，否则会丢失图面内容。
 
 `topology.elements` 是可选数组，最多 100 项，元素公共字段为 `id`、`kind`、`x`、`y`、`width`、`height`、`title`、`color` 及可选 `locked`。宽度 160–10000、高度 80–10000 px，坐标范围与节点一致。三种类型：
 
@@ -213,13 +213,46 @@ SVG/PNG/HTML 与独立组件使用同一套图面 SVG 内容。JSON 和 HTML 保
 
 启动制作工具后打开 `/viewer.html`，可独立导入通用文件、填写宿主数据、观察节点点击回调。拓扑库的“独立预览”链接带文档 ID 和 `draft=1`，由验证页读取同源浏览器中的有效草稿；没有该参数时读取手动保存版本。展示组件本身不依赖该存档。跨软件使用请传入导出的文件。
 
-浏览器拓扑库仍兼容 `version: 1`，额外的 `editing` 元数据保存草稿和有限历史。它属于制作工具内部存储，不属于 `.topology.json` 通用文件格式，不应作为宿主接口。自动保存不改变独立展示组件 API，也不把运行参数或模拟器状态写入文件。
+浏览器拓扑库仍使用 `version: 1`，内部 `editing.version` 升级为 2，兼容读取旧版并在下次成功写入时保存新版；`publishing.version: 1` 保存发布记录。旧工具的草稿解析器拒绝版本 2，避免忽略并覆盖发布记录。两者属于制作工具内部存储，不属于 `.topology.json` 通用文件格式；宿主使用下文的发布接口。自动保存只改草稿，不把运行参数或模拟器状态写入文件。
 
 节点数据增加可选的 `locked?: boolean` 字段，缺省为未锁定。解析器、JSON Schema、草稿和历史版本会保留它；旧文件无需迁移或补入默认值。较早版本的制作工具可能不保留此字段，需要保留锁定设置时请配套更新解析器和 Schema。
 
 锁定属于制作工具的编辑状态：位置整理和节点批量删除会跳过锁定节点，参数及连接仍可编辑，副本默认解锁。独立组件始终只读，不渲染编辑锁定标记；`getDefinition()` 和 HTML 内嵌文档仍保留该字段。参数更新接口没有变化，PNG/SVG 的展示外观也不增加锁形图标。
 
 `/viewer.html?instances=2` 用两个独立实例验证数据隔离。右侧“填入示例数据”只是一次性准备输入，点击“更新数据”才发送给第一个实例，不会自动启动模拟器。
+
+## 发布存储接口（0.5.0）
+
+`PublicationRepository` 由宿主提供持久化实现，组件不访问 localStorage 或业务服务：
+
+```ts
+import { TopologyViewer, parsePublication } from '@topology-kit/viewer';
+import type { PublicationRepository } from '@topology-kit/viewer';
+
+// repository 由宿主实现，后端需在事务内检查 expectedRevision。
+declare const repository: PublicationRepository;
+const record = await repository.getPublished(documentId);
+if (!record) throw new Error('拓扑尚未发布');
+const published = parsePublication(record);
+const viewer = new TopologyViewer(container, { definition: published.document });
+viewer.setData(data);
+viewer.setLinkData(linkData);
+
+// 编辑端显式发布。首次 expectedRevision 为 0；冲突应重新读取后处理。
+const next = await repository.publish(draftDocument, published.revision, '更新业务连接');
+// 宿主通过自己的通知机制让展示端拉取新发布。
+viewer.setDefinition(next.document); // 换定义会清空运行数据，宿主重新绑定/发送。
+viewer.setData(newData);
+viewer.setLinkData(newLinkData);
+```
+
+接口包含 `getPublished(documentId)`、`listPublications(documentId)`、`publish(document, expectedRevision, note?)` 和 `rollback(documentId, publicationId, expectedRevision, note?)`，均返回 Promise。返回的 `TopologyPublication` 包含 `id / documentId / revision / publishedAt / note / document` 和可选 `rollbackOf`；`document` 仍是 v3。`parsePublication` 校验并规范化副本；这组元数据由发布存储管理，不添加到通用配置文件。
+
+发布与回滚必须作为原子操作检查预期版本、写入新快照并推进版本。回滚创建单调的新版本，记录原历史 ID，不覆盖原记录；权限、审核、账号、数据库事务及跨设备通知由宿主提供。发布数据只包含配置，运行参数和接收状态继续通过独立 API 提供。
+
+项目内 `src/publication-storage.ts` 的 `LocalPublicationRepository` 适配已有制作工具库，空库只读查询返回空结果，失败不初始化示例。它保留当前发布并限制历史容量，写入失败或冲突不推进内存；本地存储的标签页变更检测不等于后端事务。该适配器不打包进独立组件，宿主可按相同接口接入自己的服务。
+
+本地“打开当前发布”链接为 `/viewer.html?published=文档ID`，同源展示页通过 storage 事件跟随新发布，草稿/手动保存不触发版本替换。指定 `publication=发布ID` 固定不可变历史快照，工具同时附带 `revision=N` 供辨认，接收端校验两者一致；也支持仅按版本号查找。缺失版本显示错误，不回退到草稿。删除源图会清理其本地发布，跟随页也移除旧内容。跨软件通过发布存储接口读取快照后调用 `setDefinition`；普通 JSON 导出不携带本地发布历史。
 
 ## 接收时间与断流处理（0.4.0）
 
