@@ -24,7 +24,8 @@ export const iconNames = [
   'SlidersHorizontal', 'RotateCcw', 'Radio', 'Move', 'ExternalLink',
 ] as const;
 export type IconName = typeof iconNames[number];
-export function icon(name: keyof typeof icons, size = 18) {
+type UiIconName = IconName | 'Copy' | 'ClipboardPaste' | 'CopyPlus' | 'LockKeyholeOpen' | 'PanelLeft' | 'PanelRight';
+export function icon(name: UiIconName, size = 18) {
   const svg = createElement(icons[name]);
   svg.setAttribute('width', String(size));
   svg.setAttribute('height', String(size));

@@ -20,6 +20,7 @@ import { renderLink } from './link-rendering';
 import { copySelection, pasteSelection, moveSelection, deleteSelection, setPositionLocks, type TopologyClipboard } from './editor-commands';
 import { alignNodes, distributeNodes, alignmentLabels, MAX_LAYOUT_GAP, type Alignment, type LayoutAxis, type LayoutResult } from './layout-commands';
 import { EditorSelection } from './editor-selection';
+import { EditorHistory } from './editor-history';
 import { diagramOf, isDeviceNode, addDiagramNode, syncDrawingLayers } from './diagram-rendering';
 import { groupOf, movableSelection, reorder, setGroupMembers, elementLabels, type DiagramElement } from './diagram';
 import { addDiagramElement, fitRegion } from './diagram-commands';
@@ -54,8 +55,7 @@ let loading = false;
 let tick = 0;
 let lastUpdate = new Date();
 let savedSignature = '';
-let undoStack: TopologyDocument[] = [];
-let redoStack: TopologyDocument[] = [];
+const editorHistory = new EditorHistory();
 let recordTimer: ReturnType<typeof setTimeout>;
 let toastTimer: ReturnType<typeof setTimeout>;
 let portEditor: PortEditor | null = null;
@@ -82,7 +82,6 @@ const navigationTrail: { id: string; zoom: number; translation: { tx: number; ty
 let resizeBefore: TopologyDocument | null = null;
 let legendEdgesKey = '';
 let contextPoint: { x: number; y: number } | null = null;
-const documentHistories = new Map<string, { undo: TopologyDocument[]; redo: TopologyDocument[] }>();
 const filters = new Set<LinkKind>(['rf', 'if', 'ethernet', 'logical']);
 const telemetry = new EditorTelemetry();
 const linkFreshness = new FreshnessTracker();
@@ -287,18 +286,16 @@ function flushHistory() {
   if (dragSession || resizeBefore) return;
   clearTimeout(recordTimer);
   const current = captureDocument();
-  if (!undoStack.length || documentSignature(current) !== documentSignature(undoStack.at(-1)!)) {
-    undoStack.push(current); if (undoStack.length > 51) undoStack.shift(); redoStack = [];
-  }
+  editorHistory.record(current);
   updateSaveStatus(); updateHistoryButtons(); updateCounts();
   $('#canvas-empty').hidden = graph.getNodes().length > 0;
   scheduleDraftSave();
 }
 function updateHistoryButtons() {
   const undo = document.querySelector<HTMLButtonElement>('[data-action="undo"]');
-  if (undo) undo.disabled = undoStack.length < 2;
+  if (undo) undo.disabled = !editorHistory.canUndo;
   const redo = document.querySelector<HTMLButtonElement>('[data-action="redo"]');
-  if (redo) redo.disabled = !redoStack.length;
+  if (redo) redo.disabled = !editorHistory.canRedo;
   const del = document.querySelector<HTMLButtonElement>('[data-action="delete"]');
   const cells = selectedCells(), nodeCells = cells.filter((cell) => cell.isNode()), nodes = nodeCells.length;
   const locked = nodeCells.filter(cellLocked).length, movable = nodes - locked;
@@ -758,7 +755,6 @@ function openDocument(id: string, options: { fit?: boolean; preserveTrail?: bool
   const doc = library.documents.find((d) => d.id === id);
   if (!doc) return;
   clearTimeout(draftSaveTimer);
-  if (activeDocument && library.documents.some((d) => d.id === activeDocument.id)) documentHistories.set(activeDocument.id, { undo: undoStack, redo: redoStack });
   const recovery = workspace?.document(id);
   const recovered = recovery?.draft && !recovery.stale ? recovery.draft.document : doc;
   activeDocument = structuredClone(recovered); installEditorTemplates(activeDocument);
@@ -766,9 +762,8 @@ function openDocument(id: string, options: { fit?: boolean; preserveTrail?: bool
   resetOutage(); tick = 0; lastUpdate = new Date();
   filters.clear(); Object.keys(linkTypes).forEach((kind) => filters.add(kind as LinkKind));
   document.querySelectorAll<HTMLElement>('[data-filter]').forEach((button) => { button.classList.add('active'); button.setAttribute('aria-pressed', 'true'); });
+  editorHistory.activate(activeDocument);
   loadTopology(activeDocument.topology, options.fit !== false);
-  const history = documentHistories.get(id);
-  undoStack = history?.undo || [captureDocument()]; redoStack = history?.redo || [];
   setMode(mode); updateSaveStatus(); updateHistoryButtons();
   if (recovery?.draft) toast(recovery.stale ? '找到基于较早版本的草稿，请在“草稿与历史”中选择恢复' : `已恢复 ${time(new Date(recovery.draft.savedAt))} 自动保存的草稿`);
 }
@@ -930,7 +925,7 @@ function handleDocumentAction(action: string, id: string) {
     if (commitLibrary({ ...library, activeId: copy.id, documents: [...library.documents, copy] })) { openDocument(copy.id); showLibrary(); }
   } else if (action === 'confirm-delete') {
     const deletingActive = id === activeDocument.id;
-    try { if (commitLibrary(removeDocument(library, id))) { documentHistories.delete(id); if (deletingActive) openDocument(library.activeId); showLibrary(); updateDocumentChrome(); } }
+    try { if (commitLibrary(removeDocument(library, id))) { editorHistory.forget(id); if (deletingActive) openDocument(library.activeId); showLibrary(); updateDocumentChrome(); } }
     catch (error) { toast(error instanceof Error ? error.message : '无法删除', true); }
   }
 }
@@ -1320,8 +1315,8 @@ const actions: Record<string, () => void> = {
   save: () => { if (persistCurrent()) toast('当前拓扑已保存到拓扑库'); },
   export: () => { void exportTopology('json'); },
   import: () => $<HTMLInputElement>('#import-file').click(),
-  undo: () => { if (mode !== 'edit') return; flushHistory(); if (undoStack.length < 2) return; redoStack.push(undoStack.pop()!); applyEditorDocument(structuredClone(undoStack.at(-1)!)); scheduleDraftSave(); updateHistoryButtons(); toast('已撤销上一步'); },
-  redo: () => { if (mode !== 'edit') return; flushHistory(); const next = redoStack.pop(); if (!next) return; undoStack.push(next); applyEditorDocument(structuredClone(next)); scheduleDraftSave(); updateHistoryButtons(); toast('已重做'); },
+  undo: () => { if (mode !== 'edit') return; flushHistory(); const previous = editorHistory.undo(); if (!previous) return; applyEditorDocument(previous); scheduleDraftSave(); updateHistoryButtons(); toast('已撤销上一步'); },
+  redo: () => { if (mode !== 'edit') return; flushHistory(); const next = editorHistory.redo(); if (!next) return; applyEditorDocument(next); scheduleDraftSave(); updateHistoryButtons(); toast('已重做'); },
   delete: deleteSelected,
   pause: () => { if (telemetry.mode !== 'simulation') return; paused = !paused; syncDataControls(); updateRuntime(); },
   outage: () => {

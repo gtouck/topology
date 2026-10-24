@@ -1,0 +1,5 @@
+{
+  "editorChunk": { "bytes": 768000, "gzipBytes": 256000 },
+  "viewerEsm": { "bytes": 1126400, "gzipBytes": 307200 },
+  "viewerUmd": { "bytes": 819200, "gzipBytes": 256000 }
+}

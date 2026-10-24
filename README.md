@@ -21,7 +21,7 @@ bun run deploy
 
 脚本自动构建，将 `dist/` 上传到 `ubuntu@101.43.68.117` 的 `/home/ubuntu/station-device-draw/dist/`，并通过 Python 3 在 `0.0.0.0:10001` 提供静态预览。访问 http://101.43.68.117:10001，独立展示页为 http://101.43.68.117:10001/viewer.html。
 
-本机需要 Bun、SSH、SCP，并能通过 SSH 登录该服务器；服务器需要 Python 3，安全组和防火墙需放行 TCP 10001。后续修改后再次执行同一命令即可，服务在 SSH 断开后继续运行；服务器重启后需重新执行脚本。日志位于服务器 `/home/ubuntu/station-device-draw/preview.log`。
+本机需要 Bun、git、tar、SSH/SCP，并能登录服务器；远端需要 Python 3、systemd、flock 和 ubuntu 免交互 sudo，安全组和防火墙放行 TCP 10001。后续继续执行同一命令；服务由 systemd 托管，异常自动重启，并配置开机恢复。`bun run deploy:status` 查看状态，`bun run deploy:rollback` 切换上一版；日志用 `journalctl -u station-device-draw -n 100 --no-pager` 查看，详见 [部署维护](docs/engineering.md)。
 
 部署仅更新静态页面；拓扑文档仍保存在访问者浏览器中，不同访问地址之间请通过 JSON 导入导出迁移。
 
@@ -166,7 +166,7 @@ bun run deploy
 
 图面操作均可一步撤销。查看模式和独立展示隐藏编辑手柄，图面元素不计入业务节点数及参数采样。只包含注释的图也可导出 PNG、SVG 和离线 HTML。
 
-文件升级为 Topology v3；旧 v1/v2 可导入，新文件需使用支持 v3 的制作工具和 `0.6.0` 展示组件。旧版 Schema 保留在 `schema/topology-v2.schema.json`，不可仅降低版本号来使用新文件。
+文件升级为 Topology v3；旧 v1/v2 可导入，新文件需使用支持 v3 的制作工具和 `0.6.1` 展示组件。旧版 Schema 保留在 `schema/topology-v2.schema.json`，不可仅降低版本号来使用新文件。
 
 ## 文件格式与旧数据
 
@@ -289,3 +289,7 @@ HTML 节点内部保持普通文档流与网格排布；状态色条使用背景
 - `schema/`、`docs/`、`tests/`：格式定义、接入文档和验证。
 
 本次没有接入后端存储、权限或多人协作。独立网页以单文件 HTML 交付，无需额外解压资源包。
+
+## 工程检查与部署维护
+
+`bun run check` 执行数据、构建、独立组件类型和体积检查；`bun run test:e2e` 验证三浏览器。日常预览继续使用 `bun run deploy`，新增 `deploy:status` 与 `deploy:rollback`。代码分层、版本兼容、CI 与恢复操作见 [工程维护说明](docs/engineering.md)。

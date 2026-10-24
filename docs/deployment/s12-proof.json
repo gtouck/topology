@@ -1,0 +1,46 @@
+{
+  "recordedAt": "2026-10-24T17:59:19.510784+00:00",
+  "scope": "One-time S12 deployment recovery acceptance; no remote browser/resource crawl; no whole-host reboot. Source base commit plus uncommitted S12 changes is explicitly dirty in manifest.",
+  "service": {
+    "service": "station-device-draw.service",
+    "enabled": true,
+    "active": "active",
+    "restart": "always",
+    "crashRecovery": {
+      "beforePid": 2907816,
+      "afterPid": 2908090,
+      "restartsBefore": 0,
+      "restartsAfter": 1
+    },
+    "coldStartPid": 2908104,
+    "release": {
+      "releaseId": "20261024T175634Z-d678dbf-25768",
+      "version": "0.6.1",
+      "documentVersion": 3,
+      "commit": "d678dbf895c3462a55e9db1718007aa182b76ecc",
+      "dirty": true,
+      "builtAt": "2026-10-24T17:56:37.809Z"
+    },
+    "wholeHostReboot": false
+  },
+  "rollback": {
+    "toPrevious": "$ bash scripts/deploy.sh rollback\n当前版本：releases/legacy；上一版：releases/20261024T175634Z-d678dbf-25768",
+    "backToCurrent": "$ bash scripts/deploy.sh rollback\n当前版本：releases/20261024T175634Z-d678dbf-25768；上一版：releases/legacy"
+  },
+  "failedReleaseRecovery": {
+    "expectedFailureExit": 1,
+    "before": "releases/20261024T175634Z-d678dbf-25768",
+    "after": "releases/20261024T175634Z-d678dbf-25768",
+    "previous": "releases/legacy",
+    "active": true,
+    "release": {
+      "releaseId": "20261024T175634Z-d678dbf-25768",
+      "version": "0.6.1",
+      "documentVersion": 3,
+      "commit": "d678dbf895c3462a55e9db1718007aa182b76ecc",
+      "dirty": true,
+      "builtAt": "2026-10-24T17:56:37.809Z"
+    },
+    "probeRemoved": true
+  }
+}

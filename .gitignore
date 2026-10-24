@@ -6,3 +6,6 @@ playwright-report/
 .DS_Store
 
 performance-results/
+
+__pycache__/
+artifacts/

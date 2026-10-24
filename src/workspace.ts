@@ -1,3 +1,5 @@
+import { documentSignature } from './document-signature';
+export { documentSignature } from './document-signature';
 import { newId, parseDocument, type TopologyDocument } from './document';
 import { LIBRARY_KEY, loadLibrary, parseLibrary, type LibraryStorage, type TopologyLibrary } from './library';
 import { latestPublication, newPublication, parsePublicationState, trimPublications, PublicationConflict, type PublicationState } from './publication';
@@ -14,14 +16,6 @@ export class WorkspaceConflict extends Error {
   constructor(message = '其他标签页已修改拓扑库，保存已暂停。请导出当前图后重新读取。') { super(message); }
 }
 
-function sorted(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sorted);
-  return value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, item]) => [key, sorted(item)])) : value;
-}
-export function documentSignature(document: TopologyDocument) {
-  const { updatedAt: _updatedAt, ...content } = document;
-  return JSON.stringify(sorted(content));
-}
 function fingerprint(document: TopologyDocument) {
   const content = documentSignature(document);
   let a = 0x811c9dc5, b = 0x9e3779b9;

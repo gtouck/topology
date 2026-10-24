@@ -1,6 +1,6 @@
 {
   "name": "station-device-draw",
-  "version": "0.1.0",
+  "version": "0.6.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -15,7 +15,12 @@
     "test:e2e:edge": "playwright test --project=edge",
     "test:e2e:webkit": "playwright test --project=safari-webkit",
     "test:safari": "bun run build && bun scripts/check-safari.ts",
-    "test:benchmark": "playwright test --config playwright.performance.config.ts"
+    "test:benchmark": "playwright test --config playwright.performance.config.ts",
+    "check:package": "bun scripts/check-package.ts",
+    "test:deploy": "bun scripts/check-deploy.ts",
+    "check": "bun run test && bun run test:deploy && bun run build && bun run check:package",
+    "deploy:rollback": "bash scripts/deploy.sh rollback",
+    "deploy:status": "bash scripts/deploy.sh status"
   },
   "dependencies": {
     "@antv/x6": "^3.1.8",
@@ -26,5 +31,6 @@
     "@playwright/test": "^1.58.0",
     "typescript": "^5.9.0",
     "vite": "^7.1.0"
-  }
+  },
+  "packageManager": "bun@1.3.14"
 }
