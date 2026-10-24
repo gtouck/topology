@@ -1,5 +1,5 @@
 import type { ConnectionState } from './data-freshness';
-import { TopologyViewer } from './viewer';
+import { TopologyViewer, type TopologyNavigateEvent } from './viewer';
 import { createDocument, parseDocument, sampleDocument, type TopologyDocument } from './document';
 import { LIBRARY_KEY, parseLibrary } from './library';
 import { parseWorkspace, effectiveDocument } from './workspace';
@@ -46,7 +46,40 @@ try {
   const message = error instanceof Error ? error.message : '读取失败'; el('#viewer-error').textContent = message;
   if (publishedId) { el('#publication-error').hidden = false; el('#publication-error').textContent = message; }
 }
-const viewer = new TopologyViewer(el('#standalone-viewer'), { definition, onNodeClick: ({ node, source }) => { el('#viewer-selection').textContent = JSON.stringify({ nodeId: node.id, title: node.data.title, source }, null, 2); } });
+const viewer = new TopologyViewer(el('#standalone-viewer'), { definition, onNodeClick: ({ node, source }) => { el('#viewer-selection').textContent = JSON.stringify({ nodeId: node.id, title: node.data.title, source }, null, 2); }, onNavigate: navigateTopology });
+function navigateTopology(event: TopologyNavigateEvent) {
+  try {
+    const raw = localStorage.getItem(LIBRARY_KEY); if (!raw) throw new Error('当前浏览器中没有子拓扑，请由宿主提供目标配置');
+    const state = parseWorkspace(JSON.parse(raw)), target = state.documents.find(document => document.id === event.documentId);
+    if (!target) throw new Error('子拓扑不存在，请导入目标配置或重新绑定');
+    if (publishedId && !latestPublication(state.publishing.entries, event.documentId)) throw new Error('子拓扑尚未发布，请先在制作工具中发布');
+    const url = new URL(location.href); url.search = '';
+    url.searchParams.set(publishedId ? 'published' : 'document', event.documentId);
+    if (!publishedId && new URLSearchParams(location.search).get('draft') === '1') url.searchParams.set('draft', '1');
+    url.searchParams.set('from', event.fromDocumentId);
+    if (fixedRevision) url.searchParams.set('parentRevision', fixedRevision);
+    if (fixedPublication) url.searchParams.set('parentPublication', fixedPublication);
+    location.assign(url.href);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '无法打开子拓扑'; el('#viewer-error').textContent = message;
+    if (publishedId) { el('#publication-error').hidden = false; el('#publication-error').textContent = message; }
+  }
+}
+const parentDocument = new URLSearchParams(location.search).get('from');
+if (parentDocument) {
+  document.body.dataset.childNavigation = 'true';
+  const button = document.createElement('button'); button.className = 'demo-back'; button.textContent = '‹ 返回上级'; button.id = 'viewer-back';
+  button.onclick = () => {
+    if (document.referrer.startsWith(location.origin + '/') && history.length > 1) { history.back(); return; }
+    const url = new URL(location.href); url.search = ''; url.searchParams.set(publishedId ? 'published' : 'document', parentDocument);
+    const params = new URLSearchParams(location.search);
+    if (params.get('parentRevision')) url.searchParams.set('revision', params.get('parentRevision')!);
+    if (params.get('parentPublication')) url.searchParams.set('publication', params.get('parentPublication')!);
+    if (!publishedId && params.get('draft') === '1') url.searchParams.set('draft', '1');
+    location.assign(url.href);
+  };
+  el('header').insertBefore(button, el('.demo-button'));
+}
 let second: TopologyViewer | undefined;
 if (new URLSearchParams(location.search).get('instances') === '2') { el('#second-viewer').hidden = false; second = new TopologyViewer(el('#second-viewer'), { definition }); }
 function updateMetadata() {
@@ -108,6 +141,6 @@ el<HTMLInputElement>('#viewer-file').onchange = async (event) => {
   catch (error) { el('#viewer-error').textContent = error instanceof Error ? error.message : '导入失败'; }
   finally { input.value = ''; }
 };
-window.addEventListener('pagehide', () => { viewer.destroy(); second?.destroy(); });
+window.addEventListener('pagehide', event => { if (!event.persisted) { viewer.destroy(); second?.destroy(); } });
 declare global { interface Window { topologyViewer: TopologyViewer; secondTopologyViewer?: TopologyViewer } }
 window.topologyViewer = viewer; window.secondTopologyViewer = second;

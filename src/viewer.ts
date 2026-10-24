@@ -13,6 +13,11 @@ import { addDiagramNode, isDeviceNode, syncDrawingLayers } from './diagram-rende
 import { parseLinkData, mergeLinkData, resolveLinkState, linkStateLabel, type LinkTelemetryData, type LinkTelemetryPatch } from './link-state';
 import { renderLink } from './link-rendering';
 import flowStyles from './link-flow.css?inline';
+import { GraphNavigation } from './graph-navigation';
+import { searchTopology } from './topology-navigation';
+import navigationStyles from './graph-navigation.css?inline';
+
+export interface TopologyNavigateEvent { documentId: string; fromDocumentId: string; node: DeviceRecord }
 
 export interface TopologyViewerOptions {
   definition: unknown;
@@ -24,10 +29,13 @@ export interface TopologyViewerOptions {
   snapshot?: boolean;
   snapshotState?: { nodes?: FreshnessSnapshot; links?: FreshnessSnapshot };
   dataStatus?: boolean;
+  navigation?: boolean;
+  minimap?: boolean;
   onNodeClick?: (event: { node: DeviceRecord; source: string }) => void;
+  onNavigate?: (event: TopologyNavigateEvent) => void;
 }
 
-const styles = `${cardStyles}${statusStyles.replaceAll('#graph ', '.topology-viewer ')}${flowStyles.replaceAll('#graph ', '.topology-viewer ')}
+const styles = `${cardStyles}${statusStyles.replaceAll('#graph ', '.topology-viewer ')}${flowStyles.replaceAll('#graph ', '.topology-viewer ')}${navigationStyles.replaceAll('.graph-navigation', '.topology-viewer .graph-navigation')}
 .topology-viewer{position:relative;width:100%;height:100%;min-height:160px;overflow:hidden;background:#f9fbfa;color:#42584a;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;isolation:isolate}
 .topology-viewer *{box-sizing:border-box}.topology-viewer .tv-canvas{position:absolute;inset:0}
 .topology-viewer .diagram-element{width:100%;height:100%;overflow:hidden}.topology-viewer .diagram-group{pointer-events:none}.topology-viewer .diagram-element svg{display:block;font-family:Arial,"PingFang SC",sans-serif}
@@ -35,7 +43,8 @@ const styles = `${cardStyles}${statusStyles.replaceAll('#graph ', '.topology-vie
 .topology-viewer .tv-controls{position:absolute;right:12px;bottom:12px;display:flex;gap:4px;align-items:center;background:#fff;border:1px solid #dfe7dd;border-radius:7px;padding:4px;z-index:2}
 .topology-viewer .tv-controls button{font:inherit;border:0;background:transparent;color:#7286a6;padding:5px 8px;cursor:pointer;border-radius:4px}.topology-viewer .tv-controls button:hover{background:#eef3fb}.topology-viewer .tv-controls button:focus-visible{outline:2px solid #8eabd6}
 .topology-viewer .tv-controls span{font-size:10px;min-width:32px;text-align:center;color:#8899b2}
-.topology-viewer .tv-data-status{position:absolute;left:12px;top:10px;max-width:calc(100% - 24px);padding:5px 8px;border:1px solid #dfe5ed;border-radius:5px;background:#fffffff0;color:#788596;font-size:11px;pointer-events:none;z-index:2}\n.topology-viewer .tv-empty{position:absolute;inset:0;display:grid;place-items:center;color:#a0b196;font-size:13px;pointer-events:none}
+.topology-viewer .tv-data-status{position:absolute;left:12px;top:10px;max-width:calc(100% - 24px);padding:5px 8px;border:1px solid #dfe5ed;border-radius:5px;background:#fffffff0;color:#788596;font-size:11px;pointer-events:none;z-index:2}\n.topology-viewer[data-navigation="true"] .tv-data-status{top:auto;bottom:145px}.topology-viewer[data-navigation="true"][data-nav-compact="true"] .tv-data-status{top:55px;bottom:auto}.topology-viewer .tv-open-child{position:absolute;right:12px;bottom:56px;z-index:3;padding:7px 10px;border:1px solid #cfdbee;border-radius:5px;background:#fff;color:#5b78a3;font:12px inherit;cursor:pointer}
+.topology-viewer .tv-empty{position:absolute;inset:0;display:grid;place-items:center;color:#a0b196;font-size:13px;pointer-events:none}
 `;
 
 /** Framework-independent, read-only viewer. No storage, simulator, network or workbench imports. */
@@ -54,6 +63,10 @@ export class TopologyViewer {
   private freshnessTimer?: ReturnType<typeof setTimeout>;
   private snapshotMode = false;
   private highlighted: string | null = null;
+  private manualViewport = false;
+  private fitting = false;
+  private navigation: GraphNavigation;
+  private relatedIds: Set<string> | null = null;
   private visibilityHandler = () => { if (!this.destroyed && document.visibilityState === 'visible') this.refresh(); };
   private textureId = newId('braid');
 
@@ -77,6 +90,8 @@ export class TopologyViewer {
       if (action === 'out') this.graph.zoom(-.1);
     };
     this.graph.on('scale', () => { const label = this.root.querySelector('.tv-controls span'); if (label) label.textContent = `${Math.round(this.graph.zoom() * 100)}%`; });
+    const manualViewport = () => { if (!this.fitting) { this.manualViewport = true; cancelAnimationFrame(this.frame); } };
+    this.graph.on('scale', manualViewport); this.graph.on('translate', manualViewport);
     this.graph.on('node:click', ({ node }) => {
       if (!isDeviceNode(node)) return;
       this.highlight(node.id);
@@ -84,7 +99,13 @@ export class TopologyViewer {
       this.options.onNodeClick?.({ node: structuredClone(record), source: this.nodeState(node).source });
     });
     this.graph.on('blank:click', () => this.highlight(null));
-    this.observer = new ResizeObserver(() => { cancelAnimationFrame(this.frame); this.frame = requestAnimationFrame(() => { if (!this.destroyed) this.fit(); }); });
+    this.navigation = new GraphNavigation(this.graph, this.root, { definition: () => this.definition, enabled: options.navigation, minimap: options.minimap, select: id => {
+      this.highlight(id);
+      const node = this.definition.topology.nodes.find(record => record.id === id);
+      if (node) this.options.onNodeClick?.({ node: structuredClone(node), source: node.data.binding?.source || node.data.deviceId });
+    }, highlight: ids => { this.relatedIds = ids; this.paintHighlight(); } });
+    this.root.dataset.navigation = String(options.navigation !== false);
+    this.observer = new ResizeObserver(() => { if (this.manualViewport) return; cancelAnimationFrame(this.frame); this.frame = requestAnimationFrame(() => { if (!this.destroyed) this.fit(); }); });
     this.observer.observe(container);
     this.setDefinition(checked);
     this.data = initialData; this.linkData = initialLinks;
@@ -97,6 +118,7 @@ export class TopologyViewer {
       this.linkFreshness.receive(Object.keys(initialLinks));
     }
     document.addEventListener('visibilitychange', this.visibilityHandler);
+    window.addEventListener('pageshow', this.visibilityHandler);
     this.refresh();
   }
 
@@ -106,9 +128,10 @@ export class TopologyViewer {
   setDefinition(input: unknown) {
     this.alive();
     const definition = parseDocument(input); // Validate before touching an existing view.
-    clearTimeout(this.freshnessTimer); this.nodeFreshness.clear(); this.linkFreshness.clear(); this.snapshotMode = false; this.highlighted = null;
-    this.definition = definition; this.definitions = definitionsFromTemplates(definition.templates); this.data = {}; this.linkData = {};
+    clearTimeout(this.freshnessTimer); this.nodeFreshness.clear(); this.linkFreshness.clear(); this.snapshotMode = false; this.highlighted = null; this.manualViewport = false;
+    this.definition = definition; this.definitions = definitionsFromTemplates(definition.templates); this.data = {}; this.linkData = {}; this.relatedIds = null;
     this.graph.clearCells();
+    this.navigation.reset();
     for (const record of definition.topology.nodes) addRenderedNode(this.graph, record, {
       definitions: this.definitions, status: (n) => this.nodeState(n).status,
       pending: (n) => this.nodeState(n).pending, freshness: (n) => this.nodeState(n).freshness.phase,
@@ -120,10 +143,17 @@ export class TopologyViewer {
     this.root.querySelector('.tv-empty')?.remove();
     if (!definition.topology.nodes.length && !definition.topology.elements?.length) { const empty = document.createElement('div'); empty.className = 'tv-empty'; empty.textContent = '这张拓扑还没有内容'; this.root.appendChild(empty); }
     this.root.querySelector('.tv-canvas')!.setAttribute('aria-label', definition.name);
-    this.refresh(); cancelAnimationFrame(this.frame); this.frame = requestAnimationFrame(() => this.fit());
+    this.refresh(); this.updateChildButton(); cancelAnimationFrame(this.frame); this.frame = requestAnimationFrame(() => this.fit());
   }
 
   getDefinition() { this.alive(); return structuredClone(this.definition); }
+  search(query: string) { this.alive(); return searchTopology(this.definition, query); }
+  focus(id: string, related = false) { this.alive(); return this.navigation.focus(id, related); }
+  navigateToChild(id: string) {
+    this.alive(); const node = this.definition.topology.nodes.find(record => record.id === id);
+    if (!node?.data.childTopologyId || !this.options.onNavigate) return false;
+    this.options.onNavigate({ documentId: node.data.childTopologyId, fromDocumentId: this.definition.id, node: structuredClone(node) }); return true;
+  }
 
   private nodeIdsFor(sources: string[]) {
     const set = new Set(sources);
@@ -202,8 +232,19 @@ export class TopologyViewer {
 
   private highlight(id: string | null) {
     this.highlighted = id; this.renderDataStatus();
-    this.graph.getNodes().forEach((node) => this.graph.findViewByCell(node)?.container.querySelector('.device-card')?.classList.toggle('selected', node.id === id));
-    this.graph.getEdges().forEach((edge) => { const view = this.graph.findViewByCell(edge); if (view) (view.container as SVGElement).style.opacity = !id || edge.getSourceCellId() === id || edge.getTargetCellId() === id ? '1' : '.2'; });
+    this.navigation.setSelection(id); this.paintHighlight(); this.updateChildButton();
+  }
+  private paintHighlight() {
+    const id = this.highlighted;
+    this.graph.getNodes().forEach(node => { const view = this.graph.findViewByCell(node); if (view) { (view.container as SVGElement).style.opacity = !this.relatedIds || this.relatedIds.has(node.id) ? '1' : '.16'; view.container.querySelector('.device-card')?.classList.toggle('selected', node.id === id); } });
+    this.graph.getEdges().forEach(edge => { const view = this.graph.findViewByCell(edge); if (view) (view.container as SVGElement).style.opacity = (this.relatedIds ? this.relatedIds.has(edge.id) : !id || edge.id === id || edge.getSourceCellId() === id || edge.getTargetCellId() === id) ? '1' : '.2'; });
+  }
+  private updateChildButton() {
+    const node = this.definition.topology.nodes.find(record => record.id === this.highlighted);
+    this.root.querySelector('.tv-open-child')?.remove();
+    if (!node?.data.childTopologyId || !this.options.onNavigate) return;
+    const button = document.createElement('button'); button.className = 'tv-open-child'; button.type = 'button'; button.textContent = '打开子拓扑 ↗';
+    button.onclick = () => this.navigateToChild(node.id); this.root.appendChild(button);
   }
 
   private renderDataStatus() {
@@ -211,15 +252,22 @@ export class TopologyViewer {
     let label = this.root.querySelector<HTMLElement>('.tv-data-status');
     if (!label) { label = document.createElement('div'); label.className = 'tv-data-status'; this.root.appendChild(label); }
     if (this.highlighted) {
-      label.dataset.receivedLabel = ''; updateReceivedState(label, this.nodeFreshness.state(this.highlighted));
+      label.dataset.receivedLabel = ''; const cell = this.graph.getCellById(this.highlighted);
+      if (cell && isDeviceNode(cell)) updateReceivedState(label, this.nodeFreshness.state(this.highlighted));
+      else if (cell?.isEdge()) updateReceivedState(label, this.linkFreshness.state(this.highlighted));
+      else label.textContent = '图面元素';
     } else {
       const status = this.getDataStatus(), counts = Object.values(status.nodes).reduce((result, state) => { result[state.phase] = (result[state.phase] || 0) + 1; return result; }, {} as Record<string, number>);
       label.textContent = status.connection === 'disconnected' ? '数据连接中断' : this.snapshotMode ? '导出数据快照' : `实时数据 · 已接收 ${counts.fresh || 0} · 过期 ${counts.stale || 0} · 等待 ${counts.waiting || 0}`;
     }
   }
-  fit() { this.alive(); if (this.graph.getNodes().length) this.graph.zoomToFit({ padding: 36, maxScale: 1 }); }
+  fit() {
+    this.alive(); this.manualViewport = false; this.fitting = true;
+    try { if (this.graph.getNodes().length) this.graph.zoomToFit({ padding: { top: this.options.navigation === false ? 36 : 70, right: 36, bottom: 48, left: 36 }, maxScale: 1 }); }
+    finally { this.fitting = false; }
+  }
   destroy() {
     if (this.destroyed) return;
-    this.destroyed = true; clearTimeout(this.freshnessTimer); document.removeEventListener('visibilitychange', this.visibilityHandler); cancelAnimationFrame(this.frame); this.observer.disconnect(); this.root.onclick = null; this.graph.dispose(); this.root.remove(); this.data = {}; this.linkData = {};
+    this.destroyed = true; this.navigation.destroy(); clearTimeout(this.freshnessTimer); document.removeEventListener('visibilitychange', this.visibilityHandler); window.removeEventListener('pageshow', this.visibilityHandler); cancelAnimationFrame(this.frame); this.observer.disconnect(); this.root.onclick = null; this.graph.dispose(); this.root.remove(); this.data = {}; this.linkData = {};
   }
 }

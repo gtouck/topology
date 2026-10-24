@@ -14,7 +14,8 @@
     "test:e2e:chrome": "playwright test --project=chrome",
     "test:e2e:edge": "playwright test --project=edge",
     "test:e2e:webkit": "playwright test --project=safari-webkit",
-    "test:safari": "bun run build && bun scripts/check-safari.ts"
+    "test:safari": "bun run build && bun scripts/check-safari.ts",
+    "test:benchmark": "playwright test --config playwright.performance.config.ts"
   },
   "dependencies": {
     "@antv/x6": "^3.1.8",

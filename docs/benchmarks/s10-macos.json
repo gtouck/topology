@@ -1,0 +1,187 @@
+{
+  "measuredAt": "2026-10-24T17:37:22.898560+00:00",
+  "command": "bun run test:benchmark",
+  "protocol": "One worker, real clock, simulator paused for editor; editor import includes automation file transfer. Drag sequence is eight automation pointer steps; position/refresh samples include two animation frames. Viewer uses default live animation; batch refresh excludes one warm-up and retains five samples. No FPS or p95 claim.",
+  "measurements": [
+    {
+      "nodes": 100,
+      "edges": 300,
+      "project": "chrome",
+      "browser": "154.0.8037.58",
+      "platform": "darwin",
+      "osRelease": "27.0.0",
+      "cpu": "Apple M4",
+      "viewport": {
+        "width": 1600,
+        "height": 1050
+      },
+      "editorImportAndPaintMs": 434.6000000089407,
+      "dragSequenceAndPaintMs": 281.09999999403954,
+      "dragPositionToPaintMs": [
+        8.200000002980232,
+        10.099999994039536,
+        14.5,
+        16.100000008940697
+      ],
+      "viewerDefinitionAndPaintMs": 246.40000000596046,
+      "batchRefreshAndPaintMs": [
+        36.900000005960464,
+        33.29999999701977,
+        33.1000000089407,
+        33.20000000298023,
+        33.20000000298023
+      ],
+      "note": "Real clock, one worker; editor import includes automation file transfer, simulator paused; drag is eight automation pointer steps; position/refresh metrics include two animation frames; viewer uses default live animation; refresh excludes one warm-up."
+    },
+    {
+      "nodes": 300,
+      "edges": 1000,
+      "project": "chrome",
+      "browser": "154.0.8037.58",
+      "platform": "darwin",
+      "osRelease": "27.0.0",
+      "cpu": "Apple M4",
+      "viewport": {
+        "width": 1600,
+        "height": 1050
+      },
+      "editorImportAndPaintMs": 1226,
+      "dragSequenceAndPaintMs": 588.1000000089407,
+      "dragPositionToPaintMs": [
+        14.200000002980232,
+        12.400000005960464,
+        12.800000011920929,
+        12.600000008940697
+      ],
+      "viewerDefinitionAndPaintMs": 782.5,
+      "batchRefreshAndPaintMs": [
+        113.40000000596046,
+        116.30000001192093,
+        116.40000000596046,
+        115.90000000596046,
+        116.79999999701977
+      ],
+      "note": "Real clock, one worker; editor import includes automation file transfer, simulator paused; drag is eight automation pointer steps; position/refresh metrics include two animation frames; viewer uses default live animation; refresh excludes one warm-up."
+    },
+    {
+      "nodes": 100,
+      "edges": 300,
+      "project": "edge",
+      "browser": "156.0.4314.42",
+      "platform": "darwin",
+      "osRelease": "27.0.0",
+      "cpu": "Apple M4",
+      "viewport": {
+        "width": 1600,
+        "height": 1050
+      },
+      "editorImportAndPaintMs": 485.79999999701977,
+      "dragSequenceAndPaintMs": 275.20000000298023,
+      "dragPositionToPaintMs": [
+        17,
+        11.5,
+        14.700000002980232,
+        15.399999991059303
+      ],
+      "viewerDefinitionAndPaintMs": 255.79999999701977,
+      "batchRefreshAndPaintMs": [
+        40.79999999701977,
+        50.19999998807907,
+        49.8999999910593,
+        46.5,
+        36.1000000089407
+      ],
+      "note": "Real clock, one worker; editor import includes automation file transfer, simulator paused; drag is eight automation pointer steps; position/refresh metrics include two animation frames; viewer uses default live animation; refresh excludes one warm-up."
+    },
+    {
+      "nodes": 300,
+      "edges": 1000,
+      "project": "edge",
+      "browser": "156.0.4314.42",
+      "platform": "darwin",
+      "osRelease": "27.0.0",
+      "cpu": "Apple M4",
+      "viewport": {
+        "width": 1600,
+        "height": 1050
+      },
+      "editorImportAndPaintMs": 1231.0999999940395,
+      "dragSequenceAndPaintMs": 592.5999999940395,
+      "dragPositionToPaintMs": [
+        14,
+        13.200000002980232,
+        13.5,
+        15
+      ],
+      "viewerDefinitionAndPaintMs": 806.2000000029802,
+      "batchRefreshAndPaintMs": [
+        112,
+        114.20000000298023,
+        141.79999999701977,
+        114.29999999701977,
+        115
+      ],
+      "note": "Real clock, one worker; editor import includes automation file transfer, simulator paused; drag is eight automation pointer steps; position/refresh metrics include two animation frames; viewer uses default live animation; refresh excludes one warm-up."
+    },
+    {
+      "nodes": 100,
+      "edges": 300,
+      "project": "safari-webkit",
+      "browser": "27.2",
+      "platform": "darwin",
+      "osRelease": "27.0.0",
+      "cpu": "Apple M4",
+      "viewport": {
+        "width": 1600,
+        "height": 1050
+      },
+      "editorImportAndPaintMs": 743,
+      "dragSequenceAndPaintMs": 242,
+      "dragPositionToPaintMs": [
+        20,
+        26,
+        21,
+        26
+      ],
+      "viewerDefinitionAndPaintMs": 568,
+      "batchRefreshAndPaintMs": [
+        251,
+        132,
+        218,
+        226,
+        190
+      ],
+      "note": "Real clock, one worker; editor import includes automation file transfer, simulator paused; drag is eight automation pointer steps; position/refresh metrics include two animation frames; viewer uses default live animation; refresh excludes one warm-up."
+    },
+    {
+      "nodes": 300,
+      "edges": 1000,
+      "project": "safari-webkit",
+      "browser": "27.2",
+      "platform": "darwin",
+      "osRelease": "27.0.0",
+      "cpu": "Apple M4",
+      "viewport": {
+        "width": 1600,
+        "height": 1050
+      },
+      "editorImportAndPaintMs": 3741,
+      "dragSequenceAndPaintMs": 651,
+      "dragPositionToPaintMs": [
+        33,
+        25,
+        31,
+        45
+      ],
+      "viewerDefinitionAndPaintMs": 1619,
+      "batchRefreshAndPaintMs": [
+        255,
+        213,
+        205,
+        204,
+        218
+      ],
+      "note": "Real clock, one worker; editor import includes automation file transfer, simulator paused; drag is eight automation pointer steps; position/refresh metrics include two animation frames; viewer uses default live animation; refresh excludes one warm-up."
+    }
+  ]
+}

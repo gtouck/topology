@@ -1,4 +1,5 @@
-export { TopologyViewer, type TopologyViewerOptions } from './viewer';
+export { TopologyViewer, type TopologyViewerOptions, type TopologyNavigateEvent } from './viewer';
+export type { NavigationResult } from './topology-navigation';
 export { parseDocument, createDocument, type TopologyDocument, type NodeTemplate } from './document';
 export type { TelemetryData } from './runtime-data';
 export type { DeviceRecord, LinkRecord, DataBinding } from './topology';

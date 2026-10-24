@@ -390,6 +390,19 @@
         "locked": {
           "type": "boolean",
           "description": "Lock node position in the editor; omitted means unlocked."
+        },
+        "childTopologyId": {
+          "type": "string",
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[\\w.-]+$",
+          "not": {
+            "enum": [
+              "__proto__",
+              "prototype",
+              "constructor"
+            ]
+          }
         }
       },
       "required": [

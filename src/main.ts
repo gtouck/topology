@@ -24,6 +24,8 @@ import { diagramOf, isDeviceNode, addDiagramNode, syncDrawingLayers } from './di
 import { groupOf, movableSelection, reorder, setGroupMembers, elementLabels, type DiagramElement } from './diagram';
 import { addDiagramElement, fitRegion } from './diagram-commands';
 import { WorkbenchLayout } from './workbench-layout';
+import { GraphNavigation } from './graph-navigation';
+import { searchTopology } from './topology-navigation';
 import { clearFieldErrors, showFieldError } from './ui-forms';
 import { categoryLabel, findDocuments, documentThumbnail, type LibrarySort } from './library-presentation';
 import {
@@ -38,6 +40,7 @@ import './node-status.css';
 import './workbench-theme.css';
 import './link-flow.css';
 import './template-editor.css';
+import './graph-navigation.css';
 
 type Mode = 'monitor' | 'edit';
 let mode: Mode = 'monitor';
@@ -72,6 +75,10 @@ let dragSession: { nodeId: string; ids: Set<string>; before: Snapshot; x: number
 let applyingDrag = false;
 let layerOrder: string[] | undefined;
 let elementsPresent = false;
+let graphNavigation: GraphNavigation | undefined;
+let focusedIds: Set<string> | null = null;
+let fitFrame = 0;
+const navigationTrail: { id: string; zoom: number; translation: { tx: number; ty: number }; selected: string | null }[] = [];
 let resizeBefore: TopologyDocument | null = null;
 let legendEdgesKey = '';
 let contextPoint: { x: number; y: number } | null = null;
@@ -108,7 +115,7 @@ $('#app').innerHTML = `
   <div class="workspace">
     <header class="topbar"><div class="topbar-navigation"><button class="icon-button" data-action="toggle-sidebar" aria-controls="sidebar" aria-expanded="true" title="收起节点库" aria-label="收起节点库">${icon('PanelLeft')}</button><div class="breadcrumb"><span>工作空间</span>${icon('ChevronRight', 14)}<span id="crumb-document">当前拓扑</span>${icon('ChevronRight', 14)}<strong id="crumb-mode">拓扑查看</strong></div></div><div class="topbar-right">${button('help', '使用指南', 'HelpCircle')}</div></header>
     <main>
-      <div class="page-heading"><div><h1 id="page-title">拓扑工作台</h1><p id="page-description">制作、管理和复用拓扑文件</p></div><div class="heading-actions"><button class="button" data-action="library">${icon('Layers', 15)}拓扑库</button><div class="mode-switch" role="group" aria-label="界面模式"><button data-action="monitor" class="active">${icon('Activity', 16)}查看</button><button data-action="edit">${icon('PencilRuler', 16)}编辑</button></div><button class="button primary" data-action="save">${icon('Save', 16)}<span>保存布局</span></button></div></div>
+      <div class="page-heading"><div><span id="navigation-trail" class="navigation-trail" hidden><button class="button" data-action="navigation-back" title="\u8fd4\u56de\u4e0a\u7ea7\u62d3\u6251">‹ <span id="navigation-parent"></span></button></span><h1 id="page-title">拓扑工作台</h1><p id="page-description">制作、管理和复用拓扑文件</p></div><div class="heading-actions"><button class="button" data-action="library">${icon('Layers', 15)}拓扑库</button><div class="mode-switch" role="group" aria-label="界面模式"><button data-action="monitor" class="active">${icon('Activity', 16)}查看</button><button data-action="edit">${icon('PencilRuler', 16)}编辑</button></div><button class="button primary" data-action="save">${icon('Save', 16)}<span>保存布局</span></button></div></div>
       <section class="topology-panel" aria-label="拓扑画布">
         <div class="panel-heading"><div class="panel-title"><span class="panel-symbol">${icon('Network', 18)}</span><h2>拓扑画布</h2><span class="tag">通用拓扑</span></div><div class="workspace-summary" aria-label="拓扑计数"><span><strong id="stat-total">0</strong> 节点</span><span><strong id="stat-links">0</strong> 链路</span></div><div class="panel-heading-actions"><span id="save-status" class="save-status">${icon('Check', 13)}示例布局</span>${button('publication', '发布与版本', 'Upload', '发布')}<span id="publication-label" class="publication-label"></span>${button('import', '导入 JSON', 'Upload')}${button('export-options', '导出拓扑', 'Download')}${button('viewer', '在独立展示页打开', 'ExternalLink')}${button('draft-history', '草稿与历史', 'Clock3')}${button('fullscreen', '全屏查看', 'Maximize')}</div></div>
         <div id="draft-notice" class="draft-notice" hidden><span id="draft-message" role="status"></span><button class="button" data-action="retry-draft">重试保存草稿</button><button class="button" data-action="export-current-backup">导出当前图</button><button class="button" data-action="storage-reload">重新读取</button></div>
@@ -200,6 +207,7 @@ function cellMovable(cell: Cell): boolean {
 }
 installCableTexture(graph, 'station-cable-braid');
 const workbench = new WorkbenchLayout(() => toast('界面偏好无法保存，本次调整仍有效；拓扑存档不受影响', true));
+graphNavigation = new GraphNavigation(graph, $('#canvas-wrap'), { definition: captureDocument, select: id => selectCell(graph.getCellById(id)), highlight: ids => { focusedIds = ids; applyHighlight(); } });
 $('#inspector').addEventListener('toggle', (event) => {
   if (event.target instanceof HTMLDetailsElement && $('#inspector').contains(event.target)) workbench.rememberSection(event.target);
 }, true);
@@ -251,6 +259,7 @@ function snapshot(): Snapshot {
   };
 }
 function loadTopology(data: Snapshot, fit = false, preserveTelemetry = false) {
+  cancelAnimationFrame(fitFrame); graphNavigation?.reset();
   loading = true; clearTimeout(recordTimer); selected = null;
   dragSession = null; resizeBefore = null; transform.clearWidgets(); graph.cleanSelection();
   if (preserveTelemetry) {
@@ -267,7 +276,7 @@ function loadTopology(data: Snapshot, fit = false, preserveTelemetry = false) {
   loading = false;
   updateRuntime(); renderInspector(); updateSaveStatus(); updateCounts();
   $('#canvas-empty').hidden = data.nodes.length > 0 || !!data.elements?.length;
-  if (fit) requestAnimationFrame(fitGraph);
+  if (fit) fitFrame = requestAnimationFrame(() => { fitFrame = 0; fitGraph(); });
 }
 function recordChange() {
   if (loading || dragSession || resizeBefore) return;
@@ -347,14 +356,16 @@ function refreshSelection() {
   ]);
   transform.clearWidgets();
   if (mode === 'edit' && selected?.isNode() && diagramOf(selected) && !cellLocked(selected)) transform.createWidget(selected);
+  graphNavigation?.setSelection(selected?.id ?? null);
   applyHighlight(); renderInspector(); updateHistoryButtons();
 }
 function applyHighlight() {
   const ids = new Set(selectedCells().map((cell) => cell.id));
   $('#graph').querySelectorAll<HTMLElement>('.device-card').forEach((el) => el.classList.toggle('selected', ids.has(el.dataset.deviceNode!)));
   $('#graph').querySelectorAll<HTMLElement>('.diagram-element').forEach((el) => el.classList.toggle('selected', mode === 'edit' && ids.has(el.dataset.diagramElement!)));
+  graph.getNodes().forEach(node => { const container = graph.findViewByCell(node)?.container as SVGElement | undefined; if (container) container.style.opacity = !focusedIds || focusedIds.has(node.id) ? '1' : '.16'; });
   graph.getEdges().forEach((edge) => {
-    const active = !ids.size || ids.has(edge.id) || ids.has(edge.getSourceCellId()) || ids.has(edge.getTargetCellId());
+    const active = focusedIds ? focusedIds.has(edge.id) : !ids.size || ids.has(edge.id) || ids.has(edge.getSourceCellId()) || ids.has(edge.getTargetCellId());
     const el = graph.findViewByCell(edge)?.container as SVGElement | undefined;
     if (el) { el.style.opacity = active ? '1' : '.22'; el.classList.toggle('selected-edge', selected?.id === edge.id); }
   });
@@ -508,8 +519,13 @@ function propertySection(key: string, title: string, content: string, open = tru
 function renderNodeEditor(node: Node, data: DeviceData) {
   return propertySection('basic', '基本信息', `<label class="field">节点名称<input id="device-title" maxlength="60" value="${esc(data.title)}" /></label><label class="field">业务对象 ID<input id="device-id" maxlength="80" value="${esc(data.deviceId)}" /></label><label class="field">管理地址<input id="device-address" maxlength="100" value="${esc(data.address)}" /></label>${renderGroupMembership(node)}<label class="field">初始状态<select id="device-status">${Object.entries(statusLabels).map(([key, label]) => `<option value="${key}" ${key === data.status ? 'selected' : ''}>${label}</option>`).join('')}</select></label>`)
     + propertySection('metrics', '卡片展示参数 <span>最多 2 项</span>', `<div class="metric-options" id="visible-metrics" tabindex="-1">${metricOptions(data, devices[data.kind])}</div><p class="field-hint">可不选参数，卡片会自动收紧高度。</p>`)
-    + renderDevicePorts(node) + renderBindingControls(data)
+    + renderChildControls(data) + renderDevicePorts(node) + renderBindingControls(data)
     + `<div class="inspector-apply"><button class="button primary full-width" data-action="apply-device">${icon('Check', 15)}应用修改</button></div>`;
+}
+function renderChildControls(data: DeviceData) {
+  const options = library.documents.filter(document => document.id !== activeDocument.id);
+  const missing = data.childTopologyId && !options.some(document => document.id === data.childTopologyId);
+  return propertySection('child-topology', '子拓扑', `<label class="field">关联的拓扑<select id="child-topology-id"><option value="">不关联子拓扑</option>${missing ? `<option value="${esc(data.childTopologyId!)}" selected>未找到 · ${esc(data.childTopologyId!)}</option>` : ''}${options.map(document => `<option value="${esc(document.id)}" ${document.id === data.childTopologyId ? 'selected' : ''}>${esc(document.name)}${workspace?.published(document.id) ? ' · 已发布' : ' · 未发布'}</option>`).join('')}</select></label><p class="field-hint">查看节点时可进入子图。发布展示只进入已发布的子图；跨软件由宿主解析关联 ID。</p>`);
 }
 
 function renderGroupMembership(node: Node) {
@@ -596,7 +612,7 @@ function renderInspector() {
   const def = devices[data.kind];
   const status = runtimeStatus(node);
   const connected = graph.getConnectedEdges(node) || [];
-  panel.innerHTML = `<div class="inspector-header"><span>${mode === 'edit' ? '节点属性' : '节点详情'}</span>${button('deselect', '关闭详情', 'X')}</div><div class="detail-identity"><span class="detail-device-icon kind-${data.kind}">${icon(def.icon, 28)}</span><h3>${esc(data.title)}</h3><span class="type-caption">${esc(def.model)}</span><span class="status-pill ${status}" id="detail-status"><i></i>${esc(runtimeLabel(node))}</span><p class="runtime-received" id="detail-received" data-received-label></p></div>${mode === 'edit' ? `<div class="node-lock-status">${icon(data.locked ? 'LockKeyhole' : 'Move', 14)}<span>${data.locked ? '位置已锁定' : groupOf(snapshot(), node.id)?.locked ? '所属区域已锁定' : '位置可编辑'}</span><button data-action="toggle-node-lock">${data.locked ? '解锁' : '锁定'}</button></div>` : ''}${mode === 'edit' ? `${renderNodeEditor(node, data)}<button class="button danger inspector-bottom-button" data-action="delete">${icon('Trash2', 15)}删除节点及连线</button>` : `${metricDetails(def, (key) => status === 'offline' ? '—' : metricValue(node, key), dataModeLabel())}${renderDevicePorts(node)}<div class="detail-section"><h4>节点信息</h4><div class="detail-info"><div><span>业务对象 ID</span><strong>${esc(data.deviceId)}</strong></div><div><span>管理地址</span><strong>${esc(data.address || '未配置')}</strong></div><div><span>关联链路</span><strong>${connected.length} 条</strong></div></div></div><div class="detail-section"><h4>连接关系</h4><div class="connection-list">${connected.map((edge) => { const other = graph.getCellById(edge.getSourceCellId() === node.id ? edge.getTargetCellId() : edge.getSourceCellId()); return `<button data-select-cell="${esc(edge.id)}"><span style="background:${linkTypes[(edge.getData()?.kind || 'ethernet') as LinkKind].color}"></span>${esc(other?.getData<DeviceData>()?.title || '未连接')}${icon('ChevronRight', 13)}</button>`; }).join('') || '<p class="muted">暂无连接</p>'}</div></div>`}`;
+  panel.innerHTML = `<div class="inspector-header"><span>${mode === 'edit' ? '节点属性' : '节点详情'}</span>${button('deselect', '关闭详情', 'X')}</div><div class="detail-identity"><span class="detail-device-icon kind-${data.kind}">${icon(def.icon, 28)}</span><h3>${esc(data.title)}</h3><span class="type-caption">${esc(def.model)}</span><span class="status-pill ${status}" id="detail-status"><i></i>${esc(runtimeLabel(node))}</span><p class="runtime-received" id="detail-received" data-received-label></p></div>${mode === 'edit' ? `<div class="node-lock-status">${icon(data.locked ? 'LockKeyhole' : 'Move', 14)}<span>${data.locked ? '位置已锁定' : groupOf(snapshot(), node.id)?.locked ? '所属区域已锁定' : '位置可编辑'}</span><button data-action="toggle-node-lock">${data.locked ? '解锁' : '锁定'}</button></div>` : ''}${mode === 'edit' ? `${renderNodeEditor(node, data)}<button class="button danger inspector-bottom-button" data-action="delete">${icon('Trash2', 15)}删除节点及连线</button>` : `${data.childTopologyId ? `<div class="detail-section"><button class="button full-width" data-action="open-child-topology">${icon('ExternalLink', 14)}打开子拓扑</button></div>` : ''}${metricDetails(def, (key) => status === 'offline' ? '—' : metricValue(node, key), dataModeLabel())}${renderDevicePorts(node)}<div class="detail-section"><h4>节点信息</h4><div class="detail-info"><div><span>业务对象 ID</span><strong>${esc(data.deviceId)}</strong></div><div><span>管理地址</span><strong>${esc(data.address || '未配置')}</strong></div><div><span>关联链路</span><strong>${connected.length} 条</strong></div></div></div><div class="detail-section"><h4>连接关系</h4><div class="connection-list">${connected.map((edge) => { const other = graph.getCellById(edge.getSourceCellId() === node.id ? edge.getTargetCellId() : edge.getSourceCellId()); return `<button data-select-cell="${esc(edge.id)}"><span style="background:${linkTypes[(edge.getData()?.kind || 'ethernet') as LinkKind].color}"></span>${esc(other?.getData<DeviceData>()?.title || '未连接')}${icon('ChevronRight', 13)}</button>`; }).join('') || '<p class="muted">暂无连接</p>'}</div></div>`}`;
   const badge = document.querySelector<HTMLElement>('#detail-status');
   if (badge) updateStatusBadge(badge, status, runtimePending(node), runtimeLabel(node), runtimeFreshness(node).phase);
   const received = document.querySelector<HTMLElement>('#detail-received'); if (received) updateEditorReceivedState(received, runtimeFreshness(node));
@@ -737,7 +753,8 @@ function applyEditorDocument(document: TopologyDocument, fit = false) {
   loadTopology(activeDocument.topology, fit, true);
   renderSidebar(); updateDocumentChrome();
 }
-function openDocument(id: string) {
+function openDocument(id: string, options: { fit?: boolean; preserveTrail?: boolean } = {}) {
+  if (!options.preserveTrail) navigationTrail.length = 0;
   const doc = library.documents.find((d) => d.id === id);
   if (!doc) return;
   clearTimeout(draftSaveTimer);
@@ -749,11 +766,35 @@ function openDocument(id: string) {
   resetOutage(); tick = 0; lastUpdate = new Date();
   filters.clear(); Object.keys(linkTypes).forEach((kind) => filters.add(kind as LinkKind));
   document.querySelectorAll<HTMLElement>('[data-filter]').forEach((button) => { button.classList.add('active'); button.setAttribute('aria-pressed', 'true'); });
-  loadTopology(activeDocument.topology, true);
+  loadTopology(activeDocument.topology, options.fit !== false);
   const history = documentHistories.get(id);
   undoStack = history?.undo || [captureDocument()]; redoStack = history?.redo || [];
   setMode(mode); updateSaveStatus(); updateHistoryButtons();
   if (recovery?.draft) toast(recovery.stale ? '找到基于较早版本的草稿，请在“草稿与历史”中选择恢复' : `已恢复 ${time(new Date(recovery.draft.savedAt))} 自动保存的草稿`);
+}
+function updateNavigationTrail() {
+  const trail = $('#navigation-trail'); trail.hidden = !navigationTrail.length;
+  if (navigationTrail.length) $('#navigation-parent').textContent = `返回 ${library.documents.find(document => document.id === navigationTrail.at(-1)!.id)?.name || '上级拓扑'}`;
+}
+function openChildTopology() {
+  if (!selected || !isDeviceNode(selected)) return;
+  const target = selected.getData<DeviceData>().childTopologyId;
+  if (!target || !library.documents.some(document => document.id === target)) { toast('当前库中未找到子拓扑，请导入目标拓扑或重新绑定', true); return; }
+  if (!saveDraftNow()) return;
+  const parent = { id: activeDocument.id, zoom: graph.zoom(), translation: { ...graph.translate() }, selected: selected.id };
+  if (commitLibrary({ ...library, activeId: target })) {
+    navigationTrail.push(parent); if (navigationTrail.length > 20) navigationTrail.shift();
+    openDocument(target, { preserveTrail: true });
+  }
+}
+function navigateBack() {
+  const parent = navigationTrail.at(-1); if (!parent || !saveDraftNow()) return;
+  if (!library.documents.some(document => document.id === parent.id)) { navigationTrail.pop(); updateNavigationTrail(); toast('上级拓扑已不存在', true); return; }
+  if (commitLibrary({ ...library, activeId: parent.id })) {
+    navigationTrail.pop(); openDocument(parent.id, { preserveTrail: true, fit: false });
+    graph.zoomTo(parent.zoom); graph.translate(parent.translation.tx, parent.translation.ty);
+    if (parent.selected) selectCell(graph.getCellById(parent.selected));
+  }
 }
 function updateDocumentChrome() {
   if (!activeDocument) return;
@@ -767,7 +808,7 @@ function updateDocumentChrome() {
   $('.panel-title .tag').textContent = categoryLabel(activeDocument.category);
   document.title = `${activeDocument.name} · Topology`;
   document.body.dataset.documentId = activeDocument.id;
-  updatePublicationLabel();
+  updatePublicationLabel(); updateNavigationTrail();
 }
 function documentsForLibrary() {
   return library.documents.map((saved) => {
@@ -1155,6 +1196,8 @@ async function exportTopology(format: 'json' | 'svg' | 'png' | 'html') {
 }
 
 const actions: Record<string, () => void> = {
+  'open-child-topology': openChildTopology,
+  'navigation-back': navigateBack,
   publication: showPublication,
   'publish-current': publishCurrent,
   'preview-published': () => { if (workspace?.published(activeDocument.id)) window.open(publicationUrl(activeDocument.id), '_blank', 'noopener'); },
@@ -1306,6 +1349,8 @@ const actions: Record<string, () => void> = {
       let document = captureDocument();
       const record = document.topology.nodes.find((node) => node.id === selected!.id)!;
       record.data = { ...record.data, title, deviceId, address: $<HTMLInputElement>('#device-address').value.trim(), status: $<HTMLSelectElement>('#device-status').value as DeviceStatus, visibleMetrics, binding };
+      const childTopologyId = $<HTMLSelectElement>('#child-topology-id').value;
+      if (childTopologyId) record.data.childTopologyId = childTopologyId; else delete record.data.childTopologyId;
       const owner = groupOf(document.topology, selected.id), target = $<HTMLSelectElement>('#node-group').value;
       if (owner?.id !== target) {
         if (owner) document.topology = setGroupMembers(document.topology, owner.id, owner.members.filter((id) => id !== selected!.id));
@@ -1427,6 +1472,7 @@ document.addEventListener('keydown', (event) => {
   if (target.id === 'layout-gap' && event.key === 'Enter') { event.preventDefault(); actions['apply-spacing'](); return; }
   if (!$('#canvas-context-menu').hidden && event.key === 'Escape') { event.preventDefault(); closeContextMenu(true); return; }
   if (target.closest('input, textarea, select, [contenteditable="true"]') || $<HTMLDialogElement>('#modal').open) return;
+  if (event.key === '/') { event.preventDefault(); graphNavigation?.focusSearch(); return; }
   if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
     event.preventDefault();
     const bounds = $('#graph').getBoundingClientRect();
@@ -1545,9 +1591,9 @@ openDocument(library.activeId);
 setInterval(() => { if (paused || telemetry.mode !== 'simulation') return; tick++; lastUpdate = new Date(); updateRuntime(); }, 2000);
 
 // A stable interface for integration and browser verification; telemetry never changes layout.
-declare global { interface Window { stationPrototype: { graph: Graph; snapshot: typeof snapshot; setDataMode: typeof setDataMode; getDataMode: () => EditorDataMode; configureFreshness: typeof configureFreshness; setConnectionState: typeof setConnectionState; getDataStatus: typeof getDataStatus; updateTelemetry: (deviceId: string, metrics: Record<string, number>, status?: DeviceStatus) => number; updateLinkTelemetry: (linkId: string, status: LinkStatus, active?: boolean) => number } } }
+declare global { interface Window { stationPrototype: { graph: Graph; snapshot: typeof snapshot; setDataMode: typeof setDataMode; getDataMode: () => EditorDataMode; search: (query: string) => ReturnType<typeof searchTopology>; focus: (id: string, related?: boolean) => boolean; configureFreshness: typeof configureFreshness; setConnectionState: typeof setConnectionState; getDataStatus: typeof getDataStatus; updateTelemetry: (deviceId: string, metrics: Record<string, number>, status?: DeviceStatus) => number; updateLinkTelemetry: (linkId: string, status: LinkStatus, active?: boolean) => number } } }
 window.stationPrototype = {
-  graph, snapshot, setDataMode, configureFreshness, setConnectionState, getDataStatus, getDataMode: () => telemetry.mode,
+  graph, snapshot, search: query => searchTopology(captureDocument(), query), focus: (id, related = false) => graphNavigation?.focus(id, related) ?? false, setDataMode, configureFreshness, setConnectionState, getDataStatus, getDataMode: () => telemetry.mode,
   updateLinkTelemetry(linkId, status, active) {
     const checked = parseLinkData({ [linkId]: { status, ...(active === undefined ? {} : { active }) } });
     const edge = graph.getCellById(linkId);

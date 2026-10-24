@@ -191,7 +191,7 @@ v3 连线增加两个可选字段：
 
 ## v3 图面元素与兼容性
 
-组件包版本为 `0.5.0`，支持运行数据超时、接收状态及发布存储接口类型；通用文件仍为 v3，包的 `./schema` 指向包含链路状态/流转扩展的 v3，`./schema/v2` 保留旧 Schema。`0.1.x` 组件不支持 v3，需配套更新，不能只将文件的版本号改回 2，否则会丢失图面内容。
+组件包版本为 `0.6.0`，支持查找、小地图、关联聚焦和子拓扑引用，包含运行时效及发布存储接口；通用文件仍为 v3，包的 `./schema` 包含全部可选扩展，`./schema/v2` 保留旧 Schema。`0.1.x` 组件不支持 v3，需配套更新，不能只将文件的版本号改回 2，否则会丢失图面内容。
 
 `topology.elements` 是可选数组，最多 100 项，元素公共字段为 `id`、`kind`、`x`、`y`、`width`、`height`、`title`、`color` 及可选 `locked`。宽度 160–10000、高度 80–10000 px，坐标范围与节点一致。三种类型：
 
@@ -220,6 +220,40 @@ SVG/PNG/HTML 与独立组件使用同一套图面 SVG 内容。JSON 和 HTML 保
 锁定属于制作工具的编辑状态：位置整理和节点批量删除会跳过锁定节点，参数及连接仍可编辑，副本默认解锁。独立组件始终只读，不渲染编辑锁定标记；`getDefinition()` 和 HTML 内嵌文档仍保留该字段。参数更新接口没有变化，PNG/SVG 的展示外观也不增加锁形图标。
 
 `/viewer.html?instances=2` 用两个独立实例验证数据隔离。右侧“填入示例数据”只是一次性准备输入，点击“更新数据”才发送给第一个实例，不会自动启动模拟器。
+
+## 查找与子拓扑导航（0.6.0）
+
+```ts
+const definitions = new Map([parent, child].map(document => [document.id, document]));
+const viewer = new TopologyViewer(container, {
+  definition: parent,
+  navigation: true, // false 隐藏搜索和小地图，程序接口仍可用
+  minimap: true,    // 初始是否展开，用户仍可切换
+  onNavigate({ documentId, fromDocumentId, node }) {
+    const target = definitions.get(documentId);
+    if (!target) { showMessage('目标拓扑未加载'); return; }
+    // 宿主可保存自己的路由/父图栈；组件不连接存储服务。
+    viewer.setDefinition(target);
+    viewer.setData(dataFor(documentId));
+    viewer.setLinkData(linksFor(documentId));
+  },
+});
+const results = viewer.search('DEV-001');
+viewer.focus(results[0].id, true); // 定位并聚焦一跳关系
+viewer.navigateToChild(results[0].id); // 触发 onNavigate
+```
+
+`search(query)` 返回最多 50 项 `{ id, kind, label, detail }`，kind 为 node/edge/element，支持忽略大小写及空格分隔条件；搜索不改变选择。`focus(id, related=false)` 返回是否找到图形，定位会更新选择，节点还会触发原 `onNodeClick`。`navigateToChild(nodeId)` 在有引用和回调时返回 true 并交给宿主处理，否则返回 false；事件副本包含 `documentId / fromDocumentId / node`，修改回调对象不改变定义。
+
+表单使用 `node.data.childTopologyId` 关联文档 ID，只接受安全标识，不是 URL；解析拒绝指向自身。引用目标可在宿主稍后加载，因此通用文档不要求内嵌全部子图。制作工具、独立展示和静态图片用 ↗ 标记引用，旧文件不补写字段，Schema、复制、撤销和发布均保留。包含引用的文件应配套使用 0.6.0，较早工具可能忽略引用。
+
+组件将视口、查找、聚焦及小地图状态与文档分离。用户平移、缩放或定位后不会被初始化/容器变化重新适应画布；点击“适应画布”恢复自动适配。销毁清理导航 DOM、观察器及图事件；多实例不注册全局快捷键。高度不足 240 px 时小地图自动收起，搜索仍可用；`navigation: false` 隐藏导航工具，`controls: false` 隐藏缩放栏，`dataStatus: false` 隐藏接收说明。
+
+制作工具在本地库中进入子图并提供返回，最多保留 20 级父图的缩放、平移和选择；不移动设备或重新布线。`/viewer.html?document=ID&draft=1` 的子图读取有效草稿，不带 draft 时读取保存版本；发布预览读取子图当前发布，未发布/缺失目标显示错误并保留父图。浏览器返回支持缓存恢复，接收时效会重新检查。
+
+导出 HTML 内置相同导航工具，并通过 `window` 上的 `topology:navigate` CustomEvent 发送同样的 detail。宿主监听事件后自行读取目标配置并调用 `setDefinition`，再发送对应数据；单文件不自动打包或请求其他子图。PNG/SVG 为静态标记，JSON/HTML 中保留 ID。
+
+制作工具验证接口 `window.stationPrototype.search(query)` 与 `focus(id, related?)` 作用于当前图。性能检查使用独立 `bun run test:benchmark`，单 worker、真实时钟及两帧绘制等待，分别测量图形导入、拖动、组件加载与批量更新，不用合成时钟代表帧率。
 
 ## 发布存储接口（0.5.0）
 

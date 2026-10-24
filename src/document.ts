@@ -90,6 +90,7 @@ export function parseDocument(input: unknown): TopologyDocument {
   const topology = parseTopologyFile({ version: 1, name: doc.name, savedAt: doc.updatedAt, topology: doc.topology }, definitions).topology;
   for (const node of topology.nodes) safeId(node.id, '节点 ID');
   for (const edge of topology.edges) safeId(edge.id, '连线 ID');
+  if (topology.nodes.some(node => node.data.childTopologyId === doc.id)) throw new Error('子拓扑不能指向当前文档自身');
   if (record.version === 3) Object.assign(topology, parseDiagram(doc.topology, topology));
   return { format: 'topology-document', version: 3, id: safeId(doc.id, '文档 ID'), name: text(doc.name, 100, '文档名称'), description: text(doc.description, 1000, '文档说明', true), category: text(doc.category, 60, '文档分类'), createdAt: date(doc.createdAt), updatedAt: date(doc.updatedAt), templates, topology };
 }

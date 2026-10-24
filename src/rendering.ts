@@ -33,11 +33,12 @@ export function registerTopologyShapes() {
       el.className = `device-card ${status}${ctx?.selected?.(node) ? ' selected' : ''}`;
       el.dataset.deviceNode = node.id;
       el.dataset.metricCount = String(data.visibleMetrics.length);
+      if (data.childTopologyId) el.dataset.childTopology = data.childTopologyId;
       const locked = ctx?.locked?.(node) ?? data.locked === true;
       el.dataset.locked = String(locked);
       const ports = devicePorts(data, ctx?.definitions || devices);
       const lockIndicator = locked && ctx?.editor ? `<span class="device-lock-indicator" hidden title="位置已锁定" aria-label="位置已锁定">${icon('LockKeyhole', 10)}</span>` : '';
-      el.innerHTML = `<div class="device-card-heading"><span class="device-glyph kind-${esc(data.kind)}">${icon(def.icon, 19)}${lockIndicator}</span><div><strong title="${esc(data.title)}">${esc(data.title)}</strong><small>${esc(def.en)}</small></div><span class="device-status-dot" title="${statusLabels[status]}"></span></div>${data.visibleMetrics.length ? `<div class="device-metrics">${data.visibleMetrics.map((key) => {
+      el.innerHTML = `<div class="device-card-heading"><span class="device-glyph kind-${esc(data.kind)}">${icon(def.icon, 19)}${lockIndicator}</span><div><strong title="${esc(data.title)}">${esc(data.title)}</strong><small>${esc(def.en)}${data.childTopologyId ? ' <span class="child-topology-marker" title="\u5305\u542b\u5b50\u62d3\u6251">↗</span>' : ''}</small></div><span class="device-status-dot" title="${statusLabels[status]}"></span></div>${data.visibleMetrics.length ? `<div class="device-metrics">${data.visibleMetrics.map((key) => {
         const metric = def.metrics.find((m) => m.key === key)!;
         const value = ctx?.value(node, key) ?? '—';
         return `<div><span>${esc(metric.label)}</span><strong data-metric="${esc(key)}">${esc(value)}<small>${value === '—' ? '' : esc(metric.unit)}</small></strong></div>`;

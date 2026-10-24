@@ -4,3 +4,5 @@ dist-viewer/
 test-results/
 playwright-report/
 .DS_Store
+
+performance-results/

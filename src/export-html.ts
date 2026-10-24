@@ -78,7 +78,8 @@ try {
   const snapshotState = JSON.parse(document.getElementById('topology-receive-state').textContent);
   const viewer = new TopologyKit.TopologyViewer(document.getElementById('topology'), {
     definition, data, linkData, snapshot: true, snapshotState, freshness: { staleAfterMs: snapshotState.staleAfterMs },
-    onNodeClick(event) { window.dispatchEvent(new CustomEvent('topology:node-click', { detail: event })); }
+    onNodeClick(event) { window.dispatchEvent(new CustomEvent('topology:node-click', { detail: event })); },
+    onNavigate(event) { window.dispatchEvent(new CustomEvent('topology:navigate', { detail: event })); }
   });
   for (const method of ['setData', 'updateData', 'setLinkData', 'updateLinkData']) {
     const original = viewer[method].bind(viewer);
