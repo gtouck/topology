@@ -1,0 +1,38 @@
+{
+  "documentId": "topology-c071894f41c035f11f742a1739bec884",
+  "expected": "9bd2d85b89c4daaa6d3b5365ad03f4f2704a6029ad9459ef94d2183dd42ceb18",
+  "nodes": 4,
+  "links": 3,
+  "drafts": 1,
+  "history": 2,
+  "publications": 1,
+  "startedAt": "2026-10-25T07:00:17.021Z",
+  "stages": [
+    {
+      "stage": "seed",
+      "revision": 4
+    },
+    {
+      "stage": "restart",
+      "revision": 4,
+      "checkedAt": "2026-10-25T07:00:59.357Z",
+      "digestMatches": true,
+      "sessionSurvived": true
+    },
+    {
+      "stage": "redeploy",
+      "revision": 4,
+      "checkedAt": "2026-10-25T07:01:53.168Z",
+      "digestMatches": true,
+      "sessionSurvived": true
+    },
+    {
+      "stage": "cleanup",
+      "revision": 5,
+      "cleanedAt": "2026-10-25T07:02:38.775Z"
+    }
+  ],
+  "target": "http://101.43.68.117:10001",
+  "dataDirectory": "/home/ubuntu/station-device-draw/data",
+  "method": "Dedicated temporary drawing; authenticated API before and after service restart and code redeployment; exact document/draft/history/publication hash comparison. No remote browser crawl."
+}

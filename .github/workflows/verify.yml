@@ -30,6 +30,7 @@ jobs:
       - run: bun run check
       - run: bunx playwright install --with-deps ${{ matrix.browsers }}
       - run: bun run test:e2e ${{ matrix.projects }}
+      - run: bun run test:e2e:server ${{ matrix.projects }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -38,4 +39,5 @@ jobs:
             artifacts/
             test-results/
             playwright-report/
+            server-test-results/
           retention-days: 14

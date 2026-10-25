@@ -1,0 +1,34 @@
+{
+  "status": "passed",
+  "startedAt": "2026-10-25T06:58:52.347Z",
+  "platform": "darwin",
+  "checks": [
+    "Chrome 通过登录与属性表单保存，服务器确认且几何保持",
+    "实际 Safari 登录表单和新会话",
+    "Safari 从服务器读回 Chrome 保存结果",
+    "Safari 通过属性表单保存并收到服务器确认",
+    "Chrome 刷新后读回 Safari 保存结果，登录会话保留"
+  ],
+  "limitations": "仅验证数据保存、会话及跨浏览器读取；不验证隐藏自动化页面的前台动画。",
+  "origin": "http://127.0.0.1:56202",
+  "documentId": "topology-95afe9271169172a094f69c3f2d01367",
+  "chromeRevision": 2,
+  "chrome": {
+    "version": "154.0.8037.58",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+    "httpOnlySession": true
+  },
+  "safari": {
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.0.1 Safari/605.1.15",
+    "viewport": [
+      1920,
+      856
+    ],
+    "devicePixelRatio": 1,
+    "visibility": "hidden",
+    "sessionAuthenticated": true
+  },
+  "safariRevision": 3,
+  "finishedAt": "2026-10-25T06:58:55.550Z",
+  "diagnostics": []
+}

@@ -9,3 +9,9 @@ performance-results/
 
 __pycache__/
 artifacts/
+dist-server/
+data/
+.local/
+.env
+.env.local
+server-test-results/

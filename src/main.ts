@@ -8,6 +8,10 @@ import { bindingForm, handleBindingClick, readBindingForm } from './binding-edit
 import { registerTopologyShapes, addRenderedNode, updateNodeGeometry, edgeLabels, installCableTexture } from './rendering';
 import { categories, newId, parseDocument, sampleDocument, templatesFromDefinitions, definitionsFromTemplates, installEditorTemplates, type NodeTemplate, type TopologyDocument } from './document';
 import { LIBRARY_KEY, duplicateDocument, removeDocument, emptyLibrary, type TopologyLibrary } from './library';
+import { RemoteWorkspace, type WorkspaceAccess } from './workspace-client';
+import { isServerMode, ensureServerSession, serverFetch, retryServerConnection, logoutServer } from './server-session';
+import { ServerRecovery, browserMigrationSource, browserMigrationRaw } from './server-recovery';
+import { parseMigrationWorkspace } from '../shared/migration';
 import { WorkspaceStore, WorkspaceConflict, documentSignature, type Workspace, type LocalVersion } from './workspace';
 import { downloadBlob, exportFilename, graphSvg, svgToPng, standaloneHtml } from './exports';
 import type { ExportState } from './export-svg';
@@ -63,7 +67,11 @@ let templateEditor: TemplateEditor | null = null;
 let portEditorNode: Node | null = null;
 let library: TopologyLibrary;
 let activeDocument: TopologyDocument;
-let workspace: WorkspaceStore | undefined;
+let workspace: WorkspaceAccess | undefined;
+const serverMode = isServerMode();
+let recoveryCopies: ServerRecovery | undefined;
+let pendingSaves = 0;
+let storageActionBusy = false;
 let draftSaveTimer: ReturnType<typeof setTimeout>;
 let draftSignature = '';
 let storageError = '';
@@ -114,13 +122,13 @@ $('#app').innerHTML = `
   <div id="sidebar-resizer" class="panel-resizer sidebar-resizer" role="separator" tabindex="0" aria-label="调整节点库宽度" aria-orientation="vertical" aria-controls="sidebar" aria-valuemin="180" aria-valuemax="320" aria-valuenow="208" title="拖动调宽；方向键微调；双击恢复默认"></div>
   <button id="sidebar-backdrop" class="sidebar-backdrop" aria-label="关闭节点库" hidden></button>
   <div class="workspace">
-    <header class="topbar"><div class="topbar-navigation"><button class="icon-button" data-action="toggle-sidebar" aria-controls="sidebar" aria-expanded="true" title="收起节点库" aria-label="收起节点库">${icon('PanelLeft')}</button><div class="breadcrumb"><span>工作空间</span>${icon('ChevronRight', 14)}<span id="crumb-document">当前拓扑</span>${icon('ChevronRight', 14)}<strong id="crumb-mode">拓扑查看</strong></div></div><div class="topbar-right">${button('help', '使用指南', 'HelpCircle')}</div></header>
+    <header class="topbar"><div class="topbar-navigation"><button class="icon-button" data-action="toggle-sidebar" aria-controls="sidebar" aria-expanded="true" title="收起节点库" aria-label="收起节点库">${icon('PanelLeft')}</button><div class="breadcrumb"><span>工作空间</span>${icon('ChevronRight', 14)}<span id="crumb-document">当前拓扑</span>${icon('ChevronRight', 14)}<strong id="crumb-mode">拓扑查看</strong></div></div><div class="topbar-right">${serverMode ? button('server-storage', '服务器拓扑库与本机恢复', 'Layers', '服务器库') : ''}${button('help', '使用指南', 'HelpCircle')}</div></header>
     <main>
       <div class="page-heading"><div><span id="navigation-trail" class="navigation-trail" hidden><button class="button" data-action="navigation-back" title="\u8fd4\u56de\u4e0a\u7ea7\u62d3\u6251">‹ <span id="navigation-parent"></span></button></span><h1 id="page-title">拓扑工作台</h1><p id="page-description">制作、管理和复用拓扑文件</p></div><div class="heading-actions"><button class="button" data-action="library">${icon('Layers', 15)}拓扑库</button><div class="mode-switch" role="group" aria-label="界面模式"><button data-action="monitor" class="active">${icon('Activity', 16)}查看</button><button data-action="edit">${icon('PencilRuler', 16)}编辑</button></div><button class="button primary" data-action="save">${icon('Save', 16)}<span>保存布局</span></button></div></div>
       <section class="topology-panel" aria-label="拓扑画布">
         <div class="panel-heading"><div class="panel-title"><span class="panel-symbol">${icon('Network', 18)}</span><h2>拓扑画布</h2><span class="tag">通用拓扑</span></div><div class="workspace-summary" aria-label="拓扑计数"><span><strong id="stat-total">0</strong> 节点</span><span><strong id="stat-links">0</strong> 链路</span></div><div class="panel-heading-actions"><span id="save-status" class="save-status">${icon('Check', 13)}示例布局</span>${button('publication', '发布与版本', 'Upload', '发布')}<span id="publication-label" class="publication-label"></span>${button('import', '导入 JSON', 'Upload')}${button('export-options', '导出拓扑', 'Download')}${button('viewer', '在独立展示页打开', 'ExternalLink')}${button('draft-history', '草稿与历史', 'Clock3')}${button('fullscreen', '全屏查看', 'Maximize')}</div></div>
         <div id="draft-notice" class="draft-notice" hidden><span id="draft-message" role="status"></span><button class="button" data-action="retry-draft">重试保存草稿</button><button class="button" data-action="export-current-backup">导出当前图</button><button class="button" data-action="storage-reload">重新读取</button></div>
-        <div class="canvas-toolbar"><div class="link-filters" aria-label="链路筛选">${(Object.entries(linkTypes) as [LinkKind, typeof linkTypes[LinkKind]][]).map(([kind, def]) => `<button data-filter="${kind}" class="filter-chip active" aria-pressed="true"><span style="--link-color:${def.color}"></span>${def.label}</button>`).join('')}</div><div class="toolbar-right"><span class="live-label" id="live-label"><i></i>模拟实时</span><span class="toolbar-separator"></span><select id="data-mode" aria-label="数据模式"><option value="simulation">模拟数据</option><option value="external">宿主数据</option></select>${button('data-settings', '数据接入设置', 'Settings')}${button('pause', '暂停模拟数据', 'Pause')}${button('outage', '模拟节点离线', 'Unplug', '离线演示', 'subtle')}</div></div>
+        <div id="server-pending-notice" class="server-pending-notice" hidden><span id="server-pending-message"></span><button class="button" data-action="server-storage">查看与迁移</button></div><div class="canvas-toolbar"><div class="link-filters" aria-label="链路筛选">${(Object.entries(linkTypes) as [LinkKind, typeof linkTypes[LinkKind]][]).map(([kind, def]) => `<button data-filter="${kind}" class="filter-chip active" aria-pressed="true"><span style="--link-color:${def.color}"></span>${def.label}</button>`).join('')}</div><div class="toolbar-right"><span class="live-label" id="live-label"><i></i>模拟实时</span><span class="toolbar-separator"></span><select id="data-mode" aria-label="数据模式"><option value="simulation">模拟数据</option><option value="external">宿主数据</option></select>${button('data-settings', '数据接入设置', 'Settings')}${button('pause', '暂停模拟数据', 'Pause')}${button('outage', '模拟节点离线', 'Unplug', '离线演示', 'subtle')}</div></div>
         <div class="selection-toolbar" id="edit-tools" hidden><div class="canvas-tool-switch" role="group" aria-label="画布工具">${button('tool-select', '拖动空白处框选节点', 'MousePointer2', '框选')}${button('tool-pan', '拖动空白处平移画布，Shift 拖动可框选', 'Hand', '平移')}</div><span class="toolbar-separator"></span>${button('undo', '撤销 Ctrl / ⌘ Z', 'Undo2')}${button('redo', '重做 Ctrl / ⌘ Shift Z', 'Redo2')}<span class="toolbar-separator"></span>${button('select-all', '全选图形对象 Ctrl / ⌘ A', 'Scan')}${button('copy', '复制节点及内部连线 Ctrl / ⌘ C', 'Copy')}${button('paste', '粘贴 Ctrl / ⌘ V', 'ClipboardPaste')}${button('duplicate', '复制副本 Ctrl / ⌘ D', 'CopyPlus')}${button('delete', '删除选中对象 Delete', 'Trash2')}<span class="toolbar-separator"></span><select id="align-command" aria-label="节点对齐" title="以首个锁定节点为参照；无锁定节点时以选区边界为参照"><option value="">对齐</option>${Object.entries(alignmentLabels).map(([key, label]) => `<option value="${key}">${label}</option>`).join('')}</select><select id="distribute-command" aria-label="节点分布" title="分布只处理未锁定节点"><option value="">分布</option><option value="horizontal">水平等距</option><option value="vertical">垂直等距</option><option value="gap">指定间距…</option></select>${button('lock-selected', '锁定位置，移动和批量删除会跳过', 'LockKeyhole')}${button('unlock-selected', '解锁所选节点', 'LockKeyholeOpen')}<span class="toolbar-separator"></span>${button('add-group', '将所选节点组成区域；无选择时创建空区域', 'Layers', '分组')}${button('add-note', '添加文字注释', 'PencilRuler', '注释')}${button('add-legend', '添加链路和状态图例', 'Info', '图例')}<select id="layer-command" aria-label="图形层次"><option value="">层次</option><option value="front">置顶</option><option value="back">置底</option></select><span id="selection-count">未选择</span><span class="selection-hint">Ctrl / ⌘ / Shift 点选 · 方向键移动</span></div>
         <div class="canvas-layout"><div class="canvas-wrap" id="canvas-wrap"><div class="canvas-watermark">当前拓扑</div><div id="graph" tabindex="0" aria-label="拓扑画布"></div><div class="canvas-empty" id="canvas-empty" hidden>${icon('Network', 32)}<strong>添加第一个节点</strong><p>展开节点库，点击模板或将其拖入画布。</p></div><div class="canvas-mode" id="canvas-mode">${icon('LockKeyhole', 13)}查看模式 · 布局已锁定</div><div class="canvas-controls">${button('zoom-out', '缩小', 'Minus')}<span id="zoom-label">100%</span>${button('zoom-in', '放大', 'Plus')}<span class="toolbar-separator"></span>${button('fit', '适应画布', 'Scan')}</div></div><div id="inspector-resizer" class="panel-resizer inspector-resizer" role="separator" tabindex="0" aria-label="调整属性栏宽度" aria-orientation="vertical" aria-controls="inspector" aria-valuemin="240" aria-valuemax="420" aria-valuenow="280" title="拖动调宽；方向键微调；双击恢复默认"></div><aside id="inspector" class="inspector" aria-label="节点与链路属性"></aside><button class="inspector-toggle icon-button" data-action="toggle-inspector" aria-controls="inspector" aria-expanded="true" title="收起属性栏" aria-label="收起属性栏">${icon('PanelRight')}</button></div>
         <div class="panel-footer"><span><span class="tiny-dot" id="footer-dot"></span><span id="footer-mode">查看模式</span><span class="footer-divider">/</span><span id="footer-hint">点击节点查看参数 · 滚轮缩放 · 拖动画布平移</span></span><span id="update-time">数据更新 --:--:--</span></div>
@@ -330,8 +338,10 @@ function updateHistoryButtons() {
 function updateSaveStatus() {
   if (!activeDocument) return;
   const current = documentSignature(captureDocument()), dirty = current !== savedSignature;
-  const draft = workspace?.document(activeDocument.id).draft;
-  const label = storageError ? '草稿保存失败' : dirty && current === draftSignature ? `草稿已自动保存 ${draft ? time(new Date(draft.savedAt)) : ''}` : dirty ? '有修改 · 等待自动保存' : '布局已保存';
+  // During an acknowledged delete the canvas may still show its recovery copy.
+  let draft;
+  try { draft = workspace?.document(activeDocument.id).draft; } catch { draft = undefined; }
+  const label = storageError ? '草稿保存失败' : pendingSaves ? '正在保存到服务器…' : dirty && current === draftSignature ? `草稿已自动保存${serverMode ? '到服务器' : ''} ${draft ? time(new Date(draft.savedAt)) : ''}` : dirty ? '有修改 · 等待自动保存' : serverMode ? '布局已保存到服务器' : '布局已保存';
   $('#save-status').innerHTML = `${icon(storageError ? 'CircleAlert' : dirty ? 'Clock3' : 'Check', 13)}${label}`;
   $('#save-status').classList.toggle('dirty', dirty);
   $('#save-status').classList.toggle('error', !!storageError);
@@ -725,36 +735,85 @@ function adoptWorkspace(state: Workspace) {
 }
 function storageFailure(error: unknown) {
   storageConflict = error instanceof WorkspaceConflict;
-  storageError = error instanceof WorkspaceConflict ? error.message : `本地保存失败：${error instanceof Error ? error.message : '存储不可用'}。当前画布仍可导出备份。`;
+  storageError = error instanceof WorkspaceConflict ? error.message : `${serverMode ? '服务器' : '本地'}保存失败：${error instanceof Error ? error.message : '存储不可用'}。当前画布仍可导出备份。`;
   clearTimeout(draftSaveTimer); updateSaveStatus();
 }
 function scheduleDraftSave() {
   clearTimeout(draftSaveTimer);
+  cacheRecovery();
   if (loading || !activeDocument || !workspace || storageConflict) return;
-  if (documentSignature(captureDocument()) !== draftSignature) draftSaveTimer = setTimeout(saveDraftNow, 1000);
+  if (documentSignature(captureDocument()) !== draftSignature || hasUnconfirmedWrite()) draftSaveTimer = setTimeout(saveDraftNow, 1000);
 }
+function hasUnconfirmedWrite() { return pendingSaves > 0 || (workspace instanceof RemoteWorkspace && workspace.hasPendingRequest); }
 function saveDraftNow(force = false) {
   clearTimeout(draftSaveTimer);
   if (!workspace || storageConflict) return false;
   const current = captureDocument(), signature = documentSignature(current);
-  if (signature === draftSignature && !force) return true;
+  if (signature === draftSignature && !force && !hasUnconfirmedWrite()) return true;
+  if (workspace instanceof RemoteWorkspace) return saveRemoteDocument(current, false);
   try {
-    adoptWorkspace(workspace.saveDraft(current));
+    adoptWorkspace((workspace as WorkspaceStore).saveDraft(current));
     activeDocument = current; draftSignature = signature; updateSaveStatus(); return true;
   } catch (error) { storageFailure(error); return false; }
 }
-function commitLibrary(next: TopologyLibrary) {
-  if (!workspace) { toast('本地库无法读取，请导出当前图并检查存档', true); return false; }
-  try { adoptWorkspace(workspace.updateLibrary(next)); return true; }
+function cacheRecovery() {
+  if (!serverMode || !activeDocument || !workspace || !recoveryCopies) return;
+  const current = captureDocument();
+  if (documentSignature(current) === draftSignature && !hasUnconfirmedWrite()) return;
+  try {
+    const remote = workspace.document(current.id);
+    recoveryCopies.save(current, documentSignature(remote.draft && !remote.stale ? remote.draft.document : remote.saved));
+  } catch (error) {
+    storageError = `本机恢复副本无法写入：${error instanceof Error ? error.message : '浏览器存储不可用'}。请保持页面打开或导出当前图。`;
+    updateSaveStatus();
+  }
+}
+async function saveRemoteDocument(current: TopologyDocument, manual: boolean) {
+  if (!(workspace instanceof RemoteWorkspace)) return false;
+  cacheRecovery(); pendingSaves++; updateSaveStatus();
+  const signature = documentSignature(current);
+  try {
+    adoptWorkspace(await (manual ? workspace.saveDocument(current) : workspace.saveDraft(current)));
+    if (activeDocument.id === current.id) {
+      // The ACK confirms the captured snapshot, never the edits made while it was in flight.
+      if (manual) savedSignature = signature;
+      draftSignature = signature;
+      if (documentSignature(captureDocument()) === signature) activeDocument = current;
+      else scheduleDraftSave();
+    }
+    recoveryCopies?.acknowledge(current); updateServerNotice(); return true;
+  } catch (error) { storageFailure(error); return false; }
+  finally { pendingSaves--; updateSaveStatus(); }
+}
+async function retryDraftSave() {
+  if (workspace instanceof RemoteWorkspace) {
+    try {
+      const current = captureDocument(), state = await workspace.retry();
+      if (!state.documents.some(document => document.id === current.id)) {
+        // A delete may have committed even when its response never arrived.
+        // Preserve the visible drawing before switching to a surviving one.
+        recoveryCopies?.save(current, draftSignature);
+        adoptWorkspace(state); editorHistory.forget(current.id); openDocument(state.activeId); updateServerNotice(); return true;
+      }
+      adoptWorkspace(state); savedSignature = documentSignature(workspace.document(current.id).saved);
+    }
+    catch (error) { storageFailure(error); return false; }
+  }
+  return saveDraftNow(true);
+}
+async function commitLibrary(next: TopologyLibrary) {
+  if (!workspace) { toast('拓扑库无法读取，请导出当前图并检查存档', true); return false; }
+  try { adoptWorkspace(await workspace.updateLibrary(next)); return true; }
   catch (error) { storageFailure(error); toast(storageError, true); return false; }
 }
-function persistCurrent() {
+async function persistCurrent() {
   finishGroupDrag(); flushHistory();
   clearTimeout(draftSaveTimer);
   const current = captureDocument();
   if (!workspace) return false;
+  if (workspace instanceof RemoteWorkspace) return saveRemoteDocument(current, true);
   try {
-    adoptWorkspace(workspace.saveDocument(current));
+    adoptWorkspace(await workspace.saveDocument(current));
     activeDocument = current; savedSignature = draftSignature = documentSignature(current); updateSaveStatus(); return true;
   } catch (error) { storageFailure(error); toast(storageError, true); return false; }
 }
@@ -767,6 +826,7 @@ function openDocument(id: string, options: { fit?: boolean; preserveTrail?: bool
   if (!options.preserveTrail) navigationTrail.length = 0;
   const doc = library.documents.find((d) => d.id === id);
   if (!doc) return;
+  if (serverMode) { try { localStorage.setItem('topology-server-active', id); } catch { /* A view preference is optional. */ } }
   clearTimeout(draftSaveTimer);
   const recovery = workspace?.document(id);
   const recovered = recovery?.draft && !recovery.stale ? recovery.draft.document : doc;
@@ -784,21 +844,21 @@ function updateNavigationTrail() {
   const trail = $('#navigation-trail'); trail.hidden = !navigationTrail.length;
   if (navigationTrail.length) $('#navigation-parent').textContent = `返回 ${library.documents.find(document => document.id === navigationTrail.at(-1)!.id)?.name || '上级拓扑'}`;
 }
-function openChildTopology() {
+async function openChildTopology() {
   if (!selected || !isDeviceNode(selected)) return;
   const target = selected.getData<DeviceData>().childTopologyId;
   if (!target || !library.documents.some(document => document.id === target)) { toast('当前库中未找到子拓扑，请导入目标拓扑或重新绑定', true); return; }
-  if (!saveDraftNow()) return;
+  if (!(await saveDraftNow())) return;
   const parent = { id: activeDocument.id, zoom: graph.zoom(), translation: { ...graph.translate() }, selected: selected.id };
-  if (commitLibrary({ ...library, activeId: target })) {
+  if (await commitLibrary({ ...library, activeId: target })) {
     navigationTrail.push(parent); if (navigationTrail.length > 20) navigationTrail.shift();
     openDocument(target, { preserveTrail: true });
   }
 }
-function navigateBack() {
-  const parent = navigationTrail.at(-1); if (!parent || !saveDraftNow()) return;
+async function navigateBack() {
+  const parent = navigationTrail.at(-1); if (!parent || !(await saveDraftNow())) return;
   if (!library.documents.some(document => document.id === parent.id)) { navigationTrail.pop(); updateNavigationTrail(); toast('上级拓扑已不存在', true); return; }
-  if (commitLibrary({ ...library, activeId: parent.id })) {
+  if (await commitLibrary({ ...library, activeId: parent.id })) {
     navigationTrail.pop(); openDocument(parent.id, { preserveTrail: true, fit: false });
     graph.zoomTo(parent.zoom); graph.translate(parent.translation.tx, parent.translation.ty);
     if (parent.selected) selectCell(graph.getCellById(parent.selected));
@@ -826,8 +886,8 @@ function documentsForLibrary() {
   });
 }
 let libraryQuery = '', libraryCategory = '', librarySort: LibrarySort = 'modified';
-function showLibrary() {
-  finishGroupDrag(); flushHistory(); saveDraftNow();
+async function showLibrary() {
+  finishGroupDrag(); flushHistory(); await saveDraftNow();
   const categoryOptions = [...new Set(documentsForLibrary().map((doc) => doc.category))].sort((a, b) => categoryLabel(a).localeCompare(categoryLabel(b), 'zh-CN'));
   if (!categoryOptions.includes(libraryCategory)) libraryCategory = '';
   showModal('拓扑库', `<div class="library-dialog-heading"><p>管理拓扑与草稿，按布局缩略图快速辨认。</p><button class="button primary" data-action="new-document">${icon('Plus', 15)}新建拓扑</button></div><div class="library-filters"><label class="library-search">${icon('Search', 16)}<input id="library-search" type="search" aria-label="搜索拓扑" placeholder="搜索名称、说明或分类" value="${esc(libraryQuery)}" /></label><label class="field">分类<select id="library-category"><option value="">全部分类</option>${categoryOptions.map((category) => `<option value="${esc(category)}" ${category === libraryCategory ? 'selected' : ''}>${esc(categoryLabel(category))}</option>`).join('')}</select></label><label class="field">排序<select id="library-sort"><option value="modified" ${librarySort === 'modified' ? 'selected' : ''}>最近修改</option><option value="name" ${librarySort === 'name' ? 'selected' : ''}>名称</option></select></label></div><div class="library-result-summary"><span id="library-result-count" role="status" aria-live="polite"></span><button class="text-button" data-action="clear-library-filters">清除筛选</button></div><div class="document-grid" id="library-results"></div>`);
@@ -858,11 +918,11 @@ function publicationUrl(id: string, revision?: number, publicationId?: string) {
   if (publicationId) url.searchParams.set('publication', publicationId);
   return url.href;
 }
-function showPublication() {
-  finishGroupDrag(); flushHistory(); saveDraftNow(); if (!workspace) return;
+async function showPublication() {
+  finishGroupDrag(); flushHistory(); await saveDraftNow(); if (!workspace) return;
   const current = workspace.published(activeDocument.id), entries = workspace.publications(activeDocument.id);
   const changed = !current || documentSignature(current.document) !== documentSignature(captureDocument());
-  showModal('发布与版本', `<p class="modal-description">发布保存在当前浏览器。自动草稿和“保存布局”不影响已发布展示；跨软件使用可导出发布配置或接入宿主存储。</p><div class="publication-summary"><strong>${current ? `当前发布 r${current.revision}` : '尚未发布'}</strong><span>${changed ? '当前草稿含未发布内容' : '草稿与当前发布内容一致'}</span><button class="button" data-action="preview-published" ${current ? '' : 'disabled'}>打开当前发布</button><button class="button" data-action="export-published" ${current ? '' : 'disabled'}>导出发布配置</button></div><input id="publication-expected-revision" type="hidden" value="${current?.revision ?? 0}"/><label class="field">本次发布说明<textarea id="publication-note" maxlength="500" rows="2" placeholder="例如：补充机房业务网连接"></textarea></label><h3>发布历史</h3><p class="field-hint">回滚将创建新的发布版本，不覆盖草稿。每图最多保留 10 版，容量不足时清理较早历史，当前发布始终保留。</p><div class="publication-list">${entries.map(p => `<article class="publication-entry" data-publication-id="${esc(p.id)}"><div><strong>r${p.revision}${current?.id === p.id ? ' · 当前发布' : ''}</strong><time>${esc(new Date(p.publishedAt).toLocaleString('zh-CN'))}</time></div><p>${esc(p.note || '无发布说明')}</p><small>${p.document.topology.nodes.length} 个节点 · ${p.document.topology.edges.length} 条连接${p.rollbackOf ? ` · 回滚来源 ${esc(p.rollbackOf)}` : ''}</small><div class="publication-actions"><button class="button" data-publication-action="preview" data-publication-revision="${p.revision}">查看此版</button><button class="button" data-publication-action="rollback" data-publication-id="${esc(p.id)}" ${p.id === current?.id ? 'disabled' : ''}>回滚到此版</button></div></article>`).join('') || '<p class="muted">还没有发布版本。发布当前配置后，展示入口才能使用。</p>'}</div>`);
+  showModal('发布与版本', `<p class="modal-description">${serverMode ? '发布保存在服务器，其他浏览器可登录查看。' : '发布保存在当前浏览器。'}自动草稿和“保存布局”不影响已发布展示；跨软件使用可导出发布配置或接入宿主存储。</p><div class="publication-summary"><strong>${current ? `当前发布 r${current.revision}` : '尚未发布'}</strong><span>${changed ? '当前草稿含未发布内容' : '草稿与当前发布内容一致'}</span><button class="button" data-action="preview-published" ${current ? '' : 'disabled'}>打开当前发布</button><button class="button" data-action="export-published" ${current ? '' : 'disabled'}>导出发布配置</button></div><input id="publication-expected-revision" type="hidden" value="${current?.revision ?? 0}"/><label class="field">本次发布说明<textarea id="publication-note" maxlength="500" rows="2" placeholder="例如：补充机房业务网连接"></textarea></label><h3>发布历史</h3><p class="field-hint">回滚将创建新的发布版本，不覆盖草稿。每图最多保留 10 版，容量不足时清理较早历史，当前发布始终保留。</p><div class="publication-list">${entries.map(p => `<article class="publication-entry" data-publication-id="${esc(p.id)}"><div><strong>r${p.revision}${current?.id === p.id ? ' · 当前发布' : ''}</strong><time>${esc(new Date(p.publishedAt).toLocaleString('zh-CN'))}</time></div><p>${esc(p.note || '无发布说明')}</p><small>${p.document.topology.nodes.length} 个节点 · ${p.document.topology.edges.length} 条连接${p.rollbackOf ? ` · 回滚来源 ${esc(p.rollbackOf)}` : ''}</small><div class="publication-actions"><button class="button" data-publication-action="preview" data-publication-revision="${p.revision}">查看此版</button><button class="button" data-publication-action="rollback" data-publication-id="${esc(p.id)}" ${p.id === current?.id ? 'disabled' : ''}>回滚到此版</button></div></article>`).join('') || '<p class="muted">还没有发布版本。发布当前配置后，展示入口才能使用。</p>'}</div>`);
   $('#modal').classList.add('publication-modal');
   $('.modal-footer').innerHTML = '<button class="button" data-action="close-modal">关闭</button><button class="button primary" data-action="publish-current">发布当前草稿</button>';
 }
@@ -870,30 +930,30 @@ function handlePublicationFailure(error: unknown) {
   if (error instanceof WorkspaceConflict) storageFailure(error);
   showFieldError('publication-note', error instanceof Error ? error.message : '发布失败，原发布保持不变');
 }
-function publishCurrent() {
+async function publishCurrent() {
   if (!workspace) return;
-  clearFieldErrors($('#modal-content')); flushHistory(); if (!saveDraftNow()) { showFieldError('publication-note', storageError || '草稿未能保存，请先导出备份并重试'); return; }
+  clearFieldErrors($('#modal-content')); flushHistory(); if (!(await saveDraftNow())) { showFieldError('publication-note', storageError || '草稿未能保存，请先导出备份并重试'); return; }
   try {
     const expected = Number($<HTMLInputElement>('#publication-expected-revision').value), note = $<HTMLTextAreaElement>('#publication-note').value.trim();
-    adoptWorkspace(workspace.publish(captureDocument(), expected, note));
-    showPublication(); toast('已发布当前草稿，发布展示已切换');
+    adoptWorkspace(await workspace.publish(captureDocument(), expected, note));
+    await showPublication(); toast('已发布当前草稿，发布展示已切换');
   } catch (error) { handlePublicationFailure(error); }
 }
-function handlePublicationAction(target: HTMLElement) {
+async function handlePublicationAction(target: HTMLElement) {
   const button = target.closest<HTMLButtonElement>('[data-publication-action]');
   if (!button || button.disabled) return false;
   if (button.dataset.publicationAction === 'preview') window.open(publicationUrl(activeDocument.id, Number(button.dataset.publicationRevision), button.closest<HTMLElement>('.publication-entry')?.dataset.publicationId), '_blank', 'noopener');
   if (button.dataset.publicationAction === 'rollback' && workspace) {
     clearFieldErrors($('#modal-content'));
     try {
-      adoptWorkspace(workspace.rollbackPublication(activeDocument.id, button.dataset.publicationId!, Number($<HTMLInputElement>('#publication-expected-revision').value)));
-      showPublication(); toast('已创建回滚发布，草稿和编辑历史保留');
+      adoptWorkspace(await workspace.rollbackPublication(activeDocument.id, button.dataset.publicationId!, Number($<HTMLInputElement>('#publication-expected-revision').value)));
+      await showPublication(); toast('已创建回滚发布，草稿和编辑历史保留');
     } catch (error) { handlePublicationFailure(error); }
   }
   return true;
 }
-function showDraftHistory() {
-  flushHistory(); saveDraftNow();
+async function showDraftHistory() {
+  flushHistory(); await saveDraftNow();
   if (!workspace) { toast('本地存储无法读取，当前图仍可导出备份', true); return; }
   const recovery = workspace.document(activeDocument.id), current = documentSignature(captureDocument());
   const reason: Record<LocalVersion['reason'], string> = { manual: '手动保存', auto: '自动检查点', 'before-restore': '恢复前备份', previous: '原保存版本' };
@@ -901,11 +961,11 @@ function showDraftHistory() {
   showModal('草稿与历史', `<p class="modal-description">自动草稿与手动保存分别保留。恢复前会备份当前内容，恢复操作可撤销。每图最多 10 个历史版本，全库最多 40 个，并按容量清理较早历史。</p><div class="history-summary">${recovery.draft ? row('draft', recovery.stale ? '较早基准的自动草稿 · 需手动恢复' : '最近自动保存的草稿', recovery.draft.savedAt, recovery.draft.document) : '<p class="muted">当前没有自动草稿。</p>'}${row('saved', '手动保存版本', recovery.saved.updatedAt, recovery.saved)}</div><h3 class="history-heading">历史版本</h3><div class="history-list">${workspace.history(activeDocument.id).map((entry) => row(entry.id, reason[entry.reason], entry.savedAt, entry.document)).join('') || '<p class="muted">手动保存或持续编辑后会生成历史版本。</p>'}</div>`);
   $('#modal').classList.add('library-modal');
 }
-function restoreLocalVersion(id: string) {
+async function restoreLocalVersion(id: string) {
   if (!workspace) return;
   flushHistory();
   try {
-    adoptWorkspace(workspace.restoreDraft(activeDocument.id, id, captureDocument()));
+    adoptWorkspace(await workspace.restoreDraft(activeDocument.id, id, captureDocument()));
     const recovery = workspace.document(activeDocument.id);
     const target = recovery.draft?.document || recovery.saved;
     draftSignature = documentSignature(target);
@@ -914,33 +974,107 @@ function restoreLocalVersion(id: string) {
     toast('已恢复到草稿，恢复前内容已备份；可撤销或手动保存');
   } catch (error) { storageFailure(error); toast(storageError, true); }
 }
-function openIndependentViewer(id: string) {
-  if (!saveDraftNow()) return;
+async function openIndependentViewer(id: string) {
+  const opened = window.open('about:blank', '_blank');
+  if (opened) opened.opener = null;
+  if (!(await saveDraftNow())) { opened?.close(); return; }
   const url = new URL('./viewer.html', window.location.href); url.searchParams.set('document', id);
   url.searchParams.set('draft', '1');
-  window.open(url, '_blank', 'noopener');
+  if (opened) opened.location.href = url.href;
+  else toast('浏览器阻止了新窗口，请允许本站打开展示页', true);
 }
-function handleDocumentAction(action: string, id: string) {
+async function handleDocumentAction(action: string, id: string) {
   if (!library.documents.some((d) => d.id === id)) return;
   if (action === 'rename') { showDocumentInfo(id); return; }
-  if (action === 'viewer') { openIndependentViewer(id); return; }
+  if (action === 'viewer') { await openIndependentViewer(id); return; }
   if (action === 'delete') {
     const doc = library.documents.find((d) => d.id === id)!;
-    showModal('删除拓扑', `<p class="modal-description">删除“${esc(doc.name)}”及其本地配置。需要保留时请先打开并导出通用文件。</p><button class="button danger" data-document-action="confirm-delete" data-document-id="${esc(id)}">确认删除这张拓扑</button>`); return;
+    showModal('删除拓扑', `<p class="modal-description">删除“${esc(doc.name)}”及其草稿、历史和发布版本。需要保留时请先打开并导出通用文件。</p><button class="button danger" data-document-action="confirm-delete" data-document-id="${esc(id)}">确认删除这张拓扑</button>`); return;
   }
-  if (!saveDraftNow()) return;
+  if (!(await saveDraftNow())) return;
   if (action === 'open') {
-    if (commitLibrary({ ...library, activeId: id })) { openDocument(id); $<HTMLDialogElement>('#modal').close(); }
+    if (await commitLibrary({ ...library, activeId: id })) { openDocument(id); $<HTMLDialogElement>('#modal').close(); }
   } else if (action === 'copy') {
     const source = documentsForLibrary().find((d) => d.id === id)!;
     const { hasDraft: _hasDraft, ...document } = source;
     const copy = duplicateDocument(document);
-    if (commitLibrary({ ...library, activeId: copy.id, documents: [...library.documents, copy] })) { openDocument(copy.id); showLibrary(); }
+    if (await commitLibrary({ ...library, activeId: copy.id, documents: [...library.documents, copy] })) { openDocument(copy.id); await showLibrary(); }
   } else if (action === 'confirm-delete') {
     const deletingActive = id === activeDocument.id;
-    try { if (commitLibrary(removeDocument(library, id))) { editorHistory.forget(id); if (deletingActive) openDocument(library.activeId); showLibrary(); updateDocumentChrome(); } }
+    try { if (await commitLibrary(removeDocument(library, id))) { editorHistory.forget(id); if (deletingActive) openDocument(library.activeId); await showLibrary(); updateDocumentChrome(); } }
     catch (error) { toast(error instanceof Error ? error.message : '无法删除', true); }
   }
+}
+
+function migrationFingerprint(value: Workspace) {
+  const text = JSON.stringify(value); let hash = 2166136261;
+  for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 16777619);
+  return `${text.length}:${hash >>> 0}`;
+}
+function updateServerNotice() {
+  if (!serverMode) return;
+  try {
+    const source = browserMigrationSource(localStorage), count = recoveryCopies?.entries().length || 0;
+    const migrate = source && localStorage.getItem('topology-server-migrated') !== migrationFingerprint(source);
+    $('#server-pending-notice').hidden = !count && !migrate;
+    $('#server-pending-message').textContent = [migrate ? `本浏览器有 ${source.documents.length} 张旧拓扑，可迁移到服务器` : '', count ? `有 ${count} 份未确认同步的本机恢复副本` : ''].filter(Boolean).join('；');
+  } catch { $('#server-pending-notice').hidden = false; $('#server-pending-message').textContent = '浏览器存档无法读取，请在服务器库中检查或导出备份'; }
+}
+function showServerStorage() {
+  if (!(workspace instanceof RemoteWorkspace)) return;
+  let source: Workspace | null = null, error = '', hasRaw = false;
+  try { hasRaw = browserMigrationRaw(localStorage) !== null; source = browserMigrationSource(localStorage); } catch (failure) { error = failure instanceof Error ? failure.message : '浏览器旧存档无法读取'; }
+  const entries = recoveryCopies?.entries() || [];
+  showModal('服务器拓扑库', `<p class="modal-description">文档、模板、草稿、历史与发布版本保存在服务器。登录同一服务器可在其他浏览器继续使用。运行参数仍由宿主系统接入。</p><div class="server-storage-summary"><strong>${library.documents.length} 张拓扑</strong><span>库版本 ${workspace.serverRevision}</span></div><div class="server-storage-actions"><button class="button" data-action="export-server-library">导出完整拓扑库</button><button class="button" data-action="import-server-library">导入完整库备份</button><button class="button" data-action="storage-reload">重新读取服务器</button><button class="button" data-action="server-logout">退出登录</button></div><input id="server-library-file" type="file" accept=".json,application/json" hidden /><h3>迁移浏览器存档</h3><p class="modal-description">${source ? `找到 ${source.documents.length} 张拓扑、${source.editing.drafts.length} 份草稿、${source.editing.history.length} 条历史和 ${source.publishing.entries.length} 个发布版本。` : '此浏览器没有旧版拓扑库。可在原浏览器打开本页面迁移，或导入完整库备份。'}迁移保留文档 ID 与子图引用，成功后原本机存档继续保留；同 ID 内容不一致时整批拒绝。</p><div class="server-storage-actions"><button class="button primary" data-action="migrate-browser-library" ${source ? '' : 'disabled'}>迁移本浏览器拓扑库</button><button class="button" data-action="export-browser-library" ${hasRaw ? '' : 'disabled'}>备份浏览器原存档</button></div><p id="server-storage-error" role="alert">${esc(error)}</p><h3>本机恢复副本</h3><p class="modal-description">网络中断或关闭页面前保留的未确认修改。恢复为新图可保留服务器当前内容；确认无用后可移除副本。</p>${entries.map(entry => `<article class="server-recovery-entry" data-recovery-key="${esc(entry.key)}"><strong>${esc(entry.document.name)}</strong><p>${esc(new Date(entry.savedAt).toLocaleString('zh-CN'))} · ${entry.document.topology.nodes.length} 个节点</p><div class="server-storage-actions"><button class="button" data-recovery-action="copy">恢复为新图</button><button class="button" data-recovery-action="export">导出副本</button><button class="button" data-recovery-action="delete">移除副本</button></div></article>`).join('') || '<p class="muted">没有待处理的本机恢复副本。</p>'}`);
+  $<HTMLInputElement>('#server-library-file').onchange = async event => {
+    const input = event.target as HTMLInputElement, file = input.files?.[0]; if (!file) return;
+    await runStorageAction(async () => {
+      try {
+        if (file.size > 32 * 1024 * 1024) throw new Error('完整库备份不能超过 32 MB');
+        const source = parseMigrationWorkspace(JSON.parse(await file.text())); await migrateWorkspace(source);
+      } catch (error) { $('#server-storage-error').textContent = error instanceof Error ? error.message : '导入失败'; }
+      finally { input.value = ''; }
+    });
+  };
+}
+async function migrateWorkspace(source: Workspace, browserSource = false) {
+  if (!(workspace instanceof RemoteWorkspace)) return;
+  if (!(await saveDraftNow())) { $('#server-storage-error').textContent = storageError; return; }
+  try {
+    adoptWorkspace(await workspace.migrateWorkspace(source));
+    if (browserSource) localStorage.setItem('topology-server-migrated', migrationFingerprint(source));
+    if (!library.documents.some(document => document.id === activeDocument.id)) openDocument(library.activeId);
+    updateDocumentChrome(); updateServerNotice(); showServerStorage(); toast('完整拓扑库已迁入服务器，原存档保留');
+  } catch (error) { storageFailure(error); $('#server-storage-error').textContent = error instanceof Error ? error.message : '迁移失败'; }
+}
+async function handleRecoveryAction(button: HTMLElement) {
+  const key = button.closest<HTMLElement>('[data-recovery-key]')?.dataset.recoveryKey;
+  const entry = recoveryCopies?.entries().find(entry => entry.key === key); if (!entry) return;
+  if (button.dataset.recoveryAction === 'export') {
+    downloadBlob(new Blob([JSON.stringify(entry.document, null, 2)], { type: 'application/json' }), exportFilename(entry.document.name, 'recovery.topology.json')); return;
+  }
+  if (button.dataset.recoveryAction === 'copy') {
+    if (!(await saveDraftNow())) return;
+    const copy = duplicateDocument(entry.document); copy.name = `${entry.document.name.slice(0, 90)} 恢复副本`;
+    if (!(await commitLibrary({ ...library, activeId: copy.id, documents: [...library.documents, copy] }))) return;
+    openDocument(copy.id); toast('已恢复为新图，服务器原图保留');
+  }
+  recoveryCopies!.remove(entry.key); updateServerNotice(); showServerStorage();
+}
+
+async function runStorageAction(action: () => unknown) {
+  if (storageActionBusy) return;
+  storageActionBusy = true;
+  if (serverMode) $('#app').inert = true;
+  try { await action(); }
+  catch (error) { toast(error instanceof Error ? error.message : '操作失败，请重试', true); }
+  finally { storageActionBusy = false; $('#app').inert = false; }
+}
+const storageActions = new Set(['open-child-topology', 'navigation-back', 'publication', 'publish-current', 'draft-history', 'library', 'create-document', 'apply-document-info', 'migrate-browser-library', 'server-logout']);
+function runAction(action: string) {
+  if (!actions[action] || storageActionBusy) return;
+  if (storageActions.has(action)) void runStorageAction(actions[action]);
+  else { try { Promise.resolve(actions[action]()).catch(error => toast(error instanceof Error ? error.message : '操作失败', true)); } catch (error) { toast(error instanceof Error ? error.message : '操作失败', true); } }
 }
 function renderBindingControls(data: DeviceData) {
   return propertySection('binding', '数据绑定 <span>用于独立展示</span>', bindingForm(data, devices[data.kind]), false, 'binding-fields');
@@ -1157,7 +1291,7 @@ $('#canvas-context-menu').addEventListener('click', (event) => {
   else if (command.startsWith('distribute:')) runDistribution(command.slice(11) as LayoutAxis);
   else if (command === 'spacing') showSpacingDialog();
   else if (command === 'paste') pasteNodes(false, point || undefined);
-  else actions[command]?.();
+  else runAction(command);
 });
 $('#canvas-context-menu').addEventListener('keydown', (event) => {
   if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeContextMenu(true); return; }
@@ -1234,7 +1368,13 @@ async function exportTopology(format: 'json' | 'svg' | 'png' | 'html') {
   }
 }
 
-const actions: Record<string, () => void> = {
+const actions: Record<string, () => unknown> = {
+  'server-storage': showServerStorage,
+  'migrate-browser-library': async () => { const source = browserMigrationSource(localStorage); if (source) await migrateWorkspace(source, true); },
+  'export-server-library': () => { if (workspace) downloadBlob(new Blob([JSON.stringify(workspace.snapshot(), null, 2)], { type: 'application/json' }), 'topology-workspace.json'); },
+  'import-server-library': () => $<HTMLInputElement>('#server-library-file').click(),
+  'export-browser-library': () => { const raw = browserMigrationRaw(localStorage); if (raw !== null) downloadBlob(new Blob([raw], { type: 'application/json' }), 'browser-workspace-backup.json'); },
+  'server-logout': async () => { if (!(await saveDraftNow())) return; await logoutServer(); reloadRequested = true; location.reload(); },
   'open-child-topology': openChildTopology,
   'navigation-back': navigateBack,
   publication: showPublication,
@@ -1279,11 +1419,11 @@ const actions: Record<string, () => void> = {
   paste: () => pasteNodes(),
   duplicate: () => pasteNodes(true),
   'draft-history': showDraftHistory,
-  'retry-draft': () => { if (saveDraftNow(true)) toast('草稿已重新保存'); },
+  'retry-draft': async () => { if (await retryDraftSave()) toast(serverMode ? '已完成重试，与服务器同步' : '草稿已重新保存'); },
   'export-current-backup': () => { void exportTopology('json'); },
   'export-reload-backup': () => { void exportTopology('json'); },
-  'storage-reload': () => showModal('重新读取拓扑库', '<p class="modal-description">重新读取会替换当前画布，未成功保存的内容无法自动保留。请先导出当前图作为备份。</p><div class="storage-reload-actions"><button class="button" data-action="export-reload-backup">导出当前图</button><button class="button primary" data-action="confirm-storage-reload">重新读取并替换画布</button></div>'),
-  'confirm-storage-reload': () => { reloadRequested = true; location.reload(); },
+  'storage-reload': () => showModal('重新读取拓扑库', `<p class="modal-description">${serverMode ? '重新读取会加载服务器最新内容。未确认的修改会保留为本机恢复副本，仍建议先导出备份。' : '重新读取会替换当前画布，未成功保存的内容无法自动保留。请先导出当前图作为备份。'}</p><div class="storage-reload-actions"><button class="button" data-action="export-reload-backup">导出当前图</button><button class="button primary" data-action="confirm-storage-reload">重新读取并替换画布</button></div>`),
+  'confirm-storage-reload': () => { cacheRecovery(); reloadRequested = true; location.reload(); },
   'export-options': () => showModal('导出拓扑', `<p class="modal-description">导出整张拓扑，包含尚未保存的修改。图片和网页保留导出时的参数、状态快照。</p><div class="export-formats">${[
     ['json', 'JSON', '通用拓扑文件', '包含节点模板和数据绑定，可导入后继续编辑。'],
     ['png', 'PNG', '高清图片', '默认 2 倍分辨率，适合报告、文档和分享。'],
@@ -1297,16 +1437,16 @@ const actions: Record<string, () => void> = {
   viewer: () => openIndependentViewer(activeDocument.id),
   'document-info': () => showDocumentInfo(activeDocument.id),
   'new-document': () => showModal('新建拓扑', `<label class="field">拓扑名称<input id="new-document-name" maxlength="100" placeholder="例如：运控中心机房" /></label><label class="field">起始内容<select id="new-document-kind">${Object.entries(categories).map(([key, label]) => `<option value="${key}">${label}${key === 'general' ? ' · 空白画布' : ' · 示例'}</option>`).join('')}</select></label><p class="modal-description">每张图独立保存。通用节点模板可用于节点连接、业务逻辑和子系统关系。</p><button class="button primary" data-action="create-document">创建并打开</button>`),
-  'create-document': () => {
+  'create-document': async () => {
     clearFieldErrors($('#modal-content'));
     const name = $<HTMLInputElement>('#new-document-name').value.trim();
     if (!name) { showFieldError('new-document-name', '请填写拓扑名称'); return; }
     const category = $<HTMLSelectElement>('#new-document-kind').value;
-    if (!saveDraftNow()) return;
+    if (!(await saveDraftNow())) return;
     const doc = sampleDocument(category, name);
-    if (commitLibrary({ ...library, activeId: doc.id, documents: [...library.documents, doc] })) { openDocument(doc.id); $<HTMLDialogElement>('#modal').close(); setMode('edit'); }
+    if (await commitLibrary({ ...library, activeId: doc.id, documents: [...library.documents, doc] })) { openDocument(doc.id); $<HTMLDialogElement>('#modal').close(); setMode('edit'); }
   },
-  'apply-document-info': () => {
+  'apply-document-info': async () => {
     clearFieldErrors($('#modal-content'));
     const id = $<HTMLInputElement>('#metadata-document-id').value;
     const name = $<HTMLInputElement>('#metadata-name').value.trim();
@@ -1314,19 +1454,19 @@ const actions: Record<string, () => void> = {
     const description = $<HTMLTextAreaElement>('#metadata-description').value;
     if (!name) { showFieldError('metadata-name', '请填写拓扑名称'); return; }
     if (!category) { showFieldError('metadata-category', '请填写分类'); return; }
-    if (!saveDraftNow()) return;
+    if (!(await saveDraftNow())) return;
     if (!workspace) return;
     try {
       if (id === activeDocument.id) flushHistory();
       const source = documentsForLibrary().find((d) => d.id === id)!;
       const { hasDraft: _hasDraft, ...document } = source;
       const updated = { ...document, name, category, description, updatedAt: new Date().toISOString() };
-      adoptWorkspace(workspace.saveDraft(updated));
+      adoptWorkspace(await workspace.saveDraft(updated));
       if (id === activeDocument.id) {
         activeDocument = updated; draftSignature = documentSignature(updated); flushHistory();
         updateDocumentChrome(); renderSidebar(); updateSaveStatus();
       }
-      showLibrary();
+      await showLibrary();
     } catch (error) { storageFailure(error); toast(storageError, true); }
   },
   'data-settings': () => showModal('数据接入设置', `<p class="modal-description">宿主数据按节点、链路分别计时。过期时隐藏参数并停止流转；重连后需收到新数据才恢复。设置仅作用于当前页面，不写入拓扑文件。</p><label class="field">无新数据超时（秒，0 表示关闭）<input id="freshness-seconds" type="number" min="0" max="86400" step="0.1" value="${telemetry.freshness.staleAfterMs / 1000}" /></label><label class="field">数据连接状态<select id="freshness-connection"><option value="connected" ${telemetry.freshness.connection === 'connected' ? 'selected' : ''}>已连接</option><option value="disconnected" ${telemetry.freshness.connection === 'disconnected' ? 'selected' : ''}>已中断</option></select></label><button class="button primary" data-action="apply-data-settings">应用接入设置</button>`),
@@ -1356,7 +1496,7 @@ const actions: Record<string, () => void> = {
   },
   monitor: () => setMode('monitor'), edit: () => setMode('edit'), deselect: () => selectCell(null),
   fit: fitGraph, 'zoom-in': () => graph.zoom(.1), 'zoom-out': () => graph.zoom(-.1),
-  save: () => { if (persistCurrent()) toast('当前拓扑已保存到拓扑库'); },
+  save: async () => { if (await persistCurrent()) toast('当前拓扑已保存到拓扑库'); },
   export: () => { void exportTopology('json'); },
   import: () => $<HTMLInputElement>('#import-file').click(),
   undo: () => { if (mode !== 'edit') return; finishGroupDrag(); flushHistory(); const previous = editorHistory.undo(); if (!previous) return; applyEditorDocument(previous); scheduleDraftSave(); updateHistoryButtons(); toast('已撤销上一步'); },
@@ -1462,19 +1602,21 @@ const actions: Record<string, () => void> = {
   reset: () => { flushHistory(); resetOutage(); const sample = sampleDocument(activeDocument.category); applyEditorDocument({ ...activeDocument, templates: sample.templates, topology: sample.topology }, true); flushHistory(); $<HTMLDialogElement>('#modal').close(); setMode(mode); toast('已恢复当前分类的示例，可撤销'); },
 };
 
-document.addEventListener('click', (event) => {
+document.addEventListener('click', async (event) => {
   const target = event.target as HTMLElement;
   handleBindingClick(target);
-  if (handlePublicationAction(target)) return;
+  if (target.closest('[data-publication-action]')) { await runStorageAction(() => handlePublicationAction(target)); return; }
+  const recoveryButton = target.closest<HTMLElement>('[data-recovery-action]');
+  if (recoveryButton) { await runStorageAction(() => handleRecoveryAction(recoveryButton)); return; }
   if (handleTemplateCommand(target)) return;
   const preview = target.closest<HTMLElement>('[data-preview-document]');
-  if (preview) { handleDocumentAction('open', preview.dataset.previewDocument!); return; }
+  if (preview) { await runStorageAction(() => handleDocumentAction('open', preview.dataset.previewDocument!)); return; }
   const restore = target.closest<HTMLElement>('[data-restore-version]');
-  if (restore && !(restore as HTMLButtonElement).disabled) { restoreLocalVersion(restore.dataset.restoreVersion!); return; }
+  if (restore && !(restore as HTMLButtonElement).disabled) { await runStorageAction(() => restoreLocalVersion(restore.dataset.restoreVersion!)); return; }
   const docAction = target.closest<HTMLElement>('[data-document-action]');
-  if (docAction && !(docAction as HTMLButtonElement).disabled) { handleDocumentAction(docAction.dataset.documentAction!, docAction.dataset.documentId!); return; }
+  if (docAction && !(docAction as HTMLButtonElement).disabled) { await runStorageAction(() => handleDocumentAction(docAction.dataset.documentAction!, docAction.dataset.documentId!)); return; }
   const action = target.closest<HTMLElement>('[data-action]')?.dataset.action;
-  if (action && actions[action]) { if (target.closest('#sidebar')) workbench.closeDrawer(); actions[action](); return; }
+  if (action && actions[action]) { if (target.closest('#sidebar')) workbench.closeDrawer(); runAction(action); return; }
   const device = target.closest<HTMLElement>('[data-device]')?.dataset.device as DeviceKind;
   if (device && Object.hasOwn(devices, device)) { addFromLibrary(device); workbench.closeDrawer(); return; }
   const filterButton = target.closest<HTMLButtonElement>('[data-filter]');
@@ -1501,23 +1643,26 @@ $('#canvas-wrap').addEventListener('drop', (event) => {
 });
 $<HTMLInputElement>('#import-file').addEventListener('change', async (event) => {
   const input = event.target as HTMLInputElement; const file = input.files?.[0]; if (!file) return;
+  await runStorageAction(async () => {
   try {
     if (file.size > 3 * 1024 * 1024) throw new Error('文件不能超过 3 MB');
     const parsed = parseDocument(JSON.parse(await file.text()));
-    if (!saveDraftNow()) return;
+    if (!(await saveDraftNow())) return;
     const document = library.documents.some((d) => d.id === parsed.id) ? { ...parsed, id: newId(), name: `${parsed.name.slice(0, 96)} 导入` } : parsed;
-    if (commitLibrary({ ...library, activeId: document.id, documents: [...library.documents, document] })) {
+    if (await commitLibrary({ ...library, activeId: document.id, documents: [...library.documents, document] })) {
       openDocument(document.id); toast('拓扑已导入为新文档，原有拓扑保留在库中');
     }
   } catch (error) { toast(error instanceof Error ? error.message : '导入失败，文件格式不合法', true); }
   finally { input.value = ''; }
+  });
 });
 document.addEventListener('keydown', (event) => {
+  if (storageActionBusy || !activeDocument) return;
   const target = event.target as HTMLElement;
   if (target.closest('#canvas-context-menu')) return;
   if (target.id === 'layout-gap' && event.key === 'Enter') { event.preventDefault(); actions['apply-spacing'](); return; }
   if (!$('#canvas-context-menu').hidden && event.key === 'Escape') { event.preventDefault(); closeContextMenu(true); return; }
-  if (target.closest('input, textarea, select, [contenteditable="true"]') || $<HTMLDialogElement>('#modal').open) return;
+  if (target.closest('input, textarea, select, [contenteditable="true"]') || document.querySelector('dialog[open]')) return;
   if (event.key === '/') { event.preventDefault(); graphNavigation?.focusSearch(); return; }
   if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
     event.preventDefault();
@@ -1533,7 +1678,7 @@ document.addEventListener('keydown', (event) => {
     event.preventDefault(); const step = event.shiftKey ? 50 : 10;
     moveSelected(event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0, event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0); return;
   }
-  if ((event.ctrlKey || event.metaKey) && key === 's') { event.preventDefault(); actions.save(); }
+  if ((event.ctrlKey || event.metaKey) && key === 's') { event.preventDefault(); runAction('save'); }
   else if ((event.ctrlKey || event.metaKey) && key === 'z') { event.preventDefault(); if (event.shiftKey) actions.redo(); else actions.undo(); }
   else if ((event.ctrlKey || event.metaKey) && key === 'y') { event.preventDefault(); actions.redo(); }
   else if (event.key === 'Delete' || event.key === 'Backspace') { if (mode === 'edit' && selectedCells().length) { event.preventDefault(); actions.delete(); } }
@@ -1626,29 +1771,45 @@ graph.on('translate', () => closeContextMenu());
 document.addEventListener('fullscreenchange', () => setTimeout(fitGraph, 60));
 let reloadRequested = false;
 window.addEventListener('beforeunload', (event) => {
-  if (reloadRequested) return;
+  if (reloadRequested || !activeDocument) return;
   finishGroupDrag();
-  saveDraftNow();
+  if (serverMode) cacheRecovery(); else saveDraftNow();
   const signature = documentSignature(captureDocument());
-  if (signature !== savedSignature && signature !== draftSignature) event.preventDefault();
+  if (hasUnconfirmedWrite() || (signature !== savedSignature && signature !== draftSignature)) event.preventDefault();
 });
-window.addEventListener('pagehide', () => { if (!reloadRequested) saveDraftNow(); });
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveDraftNow(); });
+window.addEventListener('pagehide', () => { if (!reloadRequested && activeDocument) { if (serverMode) cacheRecovery(); else saveDraftNow(); } });
+document.addEventListener('visibilitychange', () => { if (activeDocument && document.visibilityState === 'hidden') { cacheRecovery(); void saveDraftNow(); } });
 window.addEventListener('storage', (event) => {
   try {
-    if ((event.key === LIBRARY_KEY || event.key === null) && workspace?.changedElsewhere()) storageFailure(new WorkspaceConflict());
+    if (!serverMode && (event.key === LIBRARY_KEY || event.key === null) && workspace?.changedElsewhere()) storageFailure(new WorkspaceConflict());
   } catch (error) { storageFailure(error); }
 });
 
-try {
-  workspace = new WorkspaceStore(localStorage); library = workspace.snapshot();
-} catch (error) {
-  library = emptyLibrary();
-  storageError = `存档无法读取：${error instanceof Error ? error.message : '请导入备份'}。已打开临时空图，原存档未覆盖。`;
-  toast(storageError, true);
+async function initializeWorkspace() {
+  if (serverMode) {
+    $('#app').inert = true;
+    await ensureServerSession();
+    while (true) {
+      try { workspace = await RemoteWorkspace.connect(serverFetch); break; }
+      catch (error) { await retryServerConnection(error); }
+    }
+    try {
+      recoveryCopies = new ServerRecovery(localStorage);
+      (workspace as RemoteWorkspace).select(localStorage.getItem('topology-server-active') || '');
+    } catch { storageError = '浏览器存储不可用，未同步修改无法在关闭页面后恢复，请及时保存到服务器或导出。'; }
+    library = workspace.snapshot(); $('#app').inert = false;
+  } else {
+    try { workspace = new WorkspaceStore(localStorage); library = workspace.snapshot(); }
+    catch (error) {
+      library = emptyLibrary();
+      storageError = `存档无法读取：${error instanceof Error ? error.message : '请导入备份'}。已打开临时空图，原存档未覆盖。`;
+      toast(storageError, true);
+    }
+  }
+  openDocument(library.activeId); updateServerNotice();
 }
-openDocument(library.activeId);
-setInterval(() => { if (paused || telemetry.mode !== 'simulation') return; tick++; lastUpdate = new Date(); updateRuntime(); }, 2000);
+void initializeWorkspace();
+setInterval(() => { if (!activeDocument || paused || telemetry.mode !== 'simulation') return; tick++; lastUpdate = new Date(); updateRuntime(); }, 2000);
 
 // A stable interface for integration and browser verification; telemetry never changes layout.
 declare global { interface Window { stationPrototype: { graph: Graph; snapshot: typeof snapshot; setDataMode: typeof setDataMode; getDataMode: () => EditorDataMode; search: (query: string) => ReturnType<typeof searchTopology>; focus: (id: string, related?: boolean) => boolean; configureFreshness: typeof configureFreshness; setConnectionState: typeof setConnectionState; getDataStatus: typeof getDataStatus; updateTelemetry: (deviceId: string, metrics: Record<string, number>, status?: DeviceStatus) => number; updateLinkTelemetry: (linkId: string, status: LinkStatus, active?: boolean) => number } } }
