@@ -293,3 +293,5 @@ HTML 节点内部保持普通文档流与网格排布；状态色条使用背景
 ## 工程检查与部署维护
 
 `bun run check` 执行数据、构建、独立组件类型和体积检查；`bun run test:e2e` 验证三浏览器。日常预览继续使用 `bun run deploy`，新增 `deploy:status` 与 `deploy:rollback`。代码分层、版本兼容、CI 与恢复操作见 [工程维护说明](docs/engineering.md)。
+
+剩余的实机兼容及实际业务验收入口见 [验收清单](docs/验收清单.md)，包含 Windows 命令、Safari 前台补验和三类业务图的证据模板。
