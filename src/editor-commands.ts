@@ -13,7 +13,7 @@ export function copySelection(document: TopologyDocument, selectedIds: Set<strin
   const nodes = document.topology.nodes.filter((node) => included.has(node.id));
   if (!nodes.length && !elements?.length) return null;
   const ids = new Set(nodes.map((node) => node.id)), kinds = new Set(nodes.map((node) => node.data.kind));
-  return structuredClone({ nodes, edges: document.topology.edges.filter((edge) => ids.has(edge.source.cell) && ids.has(edge.target.cell)), templates: document.templates.filter((template) => kinds.has(template.id)), ...(elements?.length ? { elements, order: drawingOrder(document.topology).filter((id) => included.has(id)) } : {}) });
+  return structuredClone({ nodes, edges: document.topology.edges.filter((edge) => ids.has(edge.source.cell) && ids.has(edge.target.cell)), templates: document.templates.filter((template) => kinds.has(template.id)), ...(elements?.length ? { elements } : {}), ...(document.topology.order || elements?.length ? { order: drawingOrder(document.topology).filter((id) => included.has(id)) } : {}) });
 }
 
 export function moveSelection(snapshot: Snapshot, ids: Set<string>, offset: Offset): Snapshot {

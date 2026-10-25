@@ -15,10 +15,10 @@ viewer.destroy();</pre></details></aside></div></main>`;
 const el = <T extends HTMLElement = HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 let definition: TopologyDocument;
 let publication: TopologyPublication | undefined;
-const publishedId = new URLSearchParams(location.search).get('published');
-const fixedRevision = new URLSearchParams(location.search).get('revision');
-const fixedPublication = new URLSearchParams(location.search).get('publication');
-const fixedVersion = fixedRevision !== null || fixedPublication !== null;
+let publishedId = new URLSearchParams(location.search).get('published');
+let fixedRevision = new URLSearchParams(location.search).get('revision');
+let fixedPublication = new URLSearchParams(location.search).get('publication');
+let fixedVersion = fixedRevision !== null || fixedPublication !== null;
 el('.demo-layout').insertAdjacentHTML('beforebegin', '<p id="publication-error" role="alert" hidden></p>');
 function readPublished() {
   const state = parseWorkspace(JSON.parse(localStorage.getItem(LIBRARY_KEY) || 'null'));
@@ -86,13 +86,30 @@ function updateMetadata() {
   el('#viewer-title').textContent = definition.name;
   el('#viewer-description').textContent = publication ? `${!fixedVersion ? '当前发布' : '固定历史版本'} r${publication.revision} · ${new Date(publication.publishedAt).toLocaleString('zh-CN')} · ${publication.note || '无发布说明'}` : definition.description || `${definition.topology.nodes.length} 个节点 · ${definition.topology.edges.length} 条连接 · Topology v3`;
   if (publication) document.body.dataset.publicationRevision = String(publication.revision);
+  else delete document.body.dataset.publicationRevision;
+}
+function resetDataControls() {
+  el<HTMLTextAreaElement>('#viewer-data').value = '{}';
+  el<HTMLTextAreaElement>('#viewer-link-data').value = '{}';
+  el('#viewer-selection').textContent = '点击节点查看回调内容';
+  el('#viewer-error').textContent = '';
+  el('#viewer-data-status').textContent = '等待宿主数据';
+}
+function leaveDocumentSource() {
+  publishedId = fixedRevision = fixedPublication = null; fixedVersion = false; publication = undefined;
+  delete document.body.dataset.published; delete document.body.dataset.childNavigation;
+  el('#publication-error').hidden = true; el('#publication-error').textContent = '';
+  document.querySelector('#viewer-back')?.remove();
+  const url = new URL(location.href);
+  for (const key of ['published', 'revision', 'publication', 'document', 'draft', 'from', 'parentRevision', 'parentPublication']) url.searchParams.delete(key);
+  history.replaceState(null, '', url.href);
 }
 updateMetadata();
 window.addEventListener('storage', event => {
   if (!publishedId || fixedVersion || (event.key !== LIBRARY_KEY && event.key !== null)) return;
   try {
     const next = readPublished();
-    if (next.id !== publication?.id) { viewer.setDefinition(next.document); definition = next.document; publication = next; updateMetadata(); el('#viewer-error').textContent = ''; el('#publication-error').hidden = true; }
+    if (next.id !== publication?.id) { viewer.setDefinition(next.document); definition = next.document; publication = next; updateMetadata(); resetDataControls(); el('#publication-error').hidden = true; }
   } catch (error) {
     // A deleted publication must not continue masquerading as the current release.
     definition = createDocument('发布版本不可用'); viewer.setDefinition(definition); publication = undefined;
@@ -134,10 +151,10 @@ el('#sample-viewer-data').onclick = () => {
   el<HTMLTextAreaElement>('#viewer-data').value = JSON.stringify(data, null, 2);
   el<HTMLTextAreaElement>('#viewer-link-data').value = JSON.stringify(Object.fromEntries(definition.topology.edges.map(edge => [edge.id, { status: 'up' }])), null, 2);
 };
-el('#clear-viewer-data').onclick = () => { viewer.setData({}); viewer.setLinkData({}); el<HTMLTextAreaElement>('#viewer-data').value = '{}'; el<HTMLTextAreaElement>('#viewer-link-data').value = '{}'; el('#viewer-data-status').textContent = '等待宿主数据'; };
+el('#clear-viewer-data').onclick = () => { viewer.setData({}); viewer.setLinkData({}); resetDataControls(); };
 el<HTMLInputElement>('#viewer-file').onchange = async (event) => {
   const input = event.target as HTMLInputElement; const file = input.files?.[0]; if (!file) return;
-  try { if (file.size > 3 * 1024 * 1024) throw new Error('文件不能超过 3 MB'); const checked = parseDocument(JSON.parse(await file.text())); viewer.setDefinition(checked); second?.setDefinition(checked); definition = checked; updateMetadata(); el<HTMLTextAreaElement>('#viewer-data').value = '{}'; el<HTMLTextAreaElement>('#viewer-link-data').value = '{}'; el('#viewer-error').textContent = ''; el('#viewer-data-status').textContent = '等待宿主数据'; }
+  try { if (file.size > 3 * 1024 * 1024) throw new Error('文件不能超过 3 MB'); const checked = parseDocument(JSON.parse(await file.text())); viewer.setDefinition(checked); second?.setDefinition(checked); definition = checked; leaveDocumentSource(); updateMetadata(); resetDataControls(); }
   catch (error) { el('#viewer-error').textContent = error instanceof Error ? error.message : '导入失败'; }
   finally { input.value = ''; }
 };

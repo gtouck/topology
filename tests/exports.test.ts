@@ -11,6 +11,13 @@ function snapshot(doc = fixture()): ExportState {
 }
 
 describe('图片与独立 HTML 导出', () => {
+  test('端口仅改名后的 SVG 几何回退保持路径和尺寸，不依赖工作台传入路径', () => {
+    const doc = fixture(), before = renderTopologySvg(doc);
+    const node = doc.topology.nodes.find(node => node.id === 'ant-01')!;
+    node.data.ports = doc.templates.find(template => template.id === node.data.kind)!.ports.map(port => ({ ...port, label: `已改名 ${port.label}` }));
+    expect(renderTopologySvg(doc)).toEqual(before);
+  });
+
   test('SVG 包含画布外节点、所有连线和手工拐点，导出不修改文档和实时值', () => {
     const doc = fixture(), state = snapshot(doc);
     doc.topology.nodes[0].x = -900;

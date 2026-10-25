@@ -72,6 +72,8 @@ let clipboard: TopologyClipboard | null = null;
 let pasteCount = 0;
 let canvasTool: 'select' | 'pan' = 'pan';
 let dragSession: { nodeId: string; ids: Set<string>; before: Snapshot; x: number; y: number; skipped: number } | null = null;
+let edgeEditing = false;
+const edgeEditBatches = new Map<string, number>();
 let applyingDrag = false;
 let layerOrder: string[] | undefined;
 let elementsPresent = false;
@@ -206,7 +208,17 @@ function cellMovable(cell: Cell): boolean {
 }
 installCableTexture(graph, 'station-cable-braid');
 const workbench = new WorkbenchLayout(() => toast('界面偏好无法保存，本次调整仍有效；拓扑存档不受影响', true));
-graphNavigation = new GraphNavigation(graph, $('#canvas-wrap'), { definition: captureDocument, select: id => selectCell(graph.getCellById(id)), highlight: ids => { focusedIds = ids; applyHighlight(); } });
+graphNavigation = new GraphNavigation(graph, $('#canvas-wrap'), { definition: captureDocument, select: id => {
+  const cell = graph.getCellById(id);
+  if (cell?.isEdge() && !cell.isVisible()) {
+    const kind: LinkKind = cell.getData()?.kind || 'ethernet';
+    filters.add(kind);
+    const button = document.querySelector<HTMLElement>(`[data-filter="${kind}"]`);
+    button?.classList.add('active'); button?.setAttribute('aria-pressed', 'true');
+    graph.getEdges().forEach(edge => edge.setVisible(filters.has(edge.getData()?.kind || 'ethernet'), { runtime: true }));
+  }
+  selectCell(cell);
+}, highlight: ids => { focusedIds = ids; applyHighlight(); } });
 $('#inspector').addEventListener('toggle', (event) => {
   if (event.target instanceof HTMLDetailsElement && $('#inspector').contains(event.target)) workbench.rememberSection(event.target);
 }, true);
@@ -260,7 +272,7 @@ function snapshot(): Snapshot {
 function loadTopology(data: Snapshot, fit = false, preserveTelemetry = false) {
   cancelAnimationFrame(fitFrame); graphNavigation?.reset();
   loading = true; clearTimeout(recordTimer); selected = null;
-  dragSession = null; resizeBefore = null; transform.clearWidgets(); graph.cleanSelection();
+  dragSession = null; edgeEditing = false; edgeEditBatches.clear(); resizeBefore = null; transform.clearWidgets(); graph.cleanSelection();
   if (preserveTelemetry) {
     telemetry.prune(new Set(data.nodes.map((node) => node.id)));
     const ids = new Set(data.edges.map(edge => edge.id)); linkFreshness.prune(ids);
@@ -278,12 +290,12 @@ function loadTopology(data: Snapshot, fit = false, preserveTelemetry = false) {
   if (fit) fitFrame = requestAnimationFrame(() => { fitFrame = 0; fitGraph(); });
 }
 function recordChange() {
-  if (loading || dragSession || resizeBefore) return;
+  if (loading || dragSession || edgeEditing || resizeBefore) return;
   clearTimeout(recordTimer);
   recordTimer = setTimeout(flushHistory, 250);
 }
 function flushHistory() {
-  if (dragSession || resizeBefore) return;
+  if (dragSession || edgeEditing || resizeBefore) return;
   clearTimeout(recordTimer);
   const current = captureDocument();
   editorHistory.record(current);
@@ -344,6 +356,7 @@ function selectCell(cell: Cell | null) {
 }
 function refreshSelection() {
   if (loading) return;
+  finishEdgeEdit();
   const cells = selectedCells();
   if (selected?.isEdge()) selected.removeTools();
   selected = cells.length === 1 ? cells[0] : null;
@@ -736,7 +749,7 @@ function commitLibrary(next: TopologyLibrary) {
   catch (error) { storageFailure(error); toast(storageError, true); return false; }
 }
 function persistCurrent() {
-  flushHistory();
+  finishGroupDrag(); flushHistory();
   clearTimeout(draftSaveTimer);
   const current = captureDocument();
   if (!workspace) return false;
@@ -1023,13 +1036,37 @@ function moveSelected(dx: number, dy: number) {
 }
 
 function selectedIds() { return new Set(selectedCells().map((cell) => cell.id)); }
+function preserveInspectorDraft() {
+  const cells = selectedCells(), id = cells.length === 1 ? cells[0].id : null;
+  // Lock and layer commands are independent of applying properties. Keep live sections so
+  // pending text, checkboxes and newly added binding rows survive the redraw.
+  const sections = cells.length === 1 && isDeviceNode(cells[0])
+    ? [...$('#inspector').querySelectorAll<HTMLElement>('[data-property-section]')] : [];
+  const diagramFields = cells.length === 1 && diagramOf(cells[0])
+    ? [...$('#inspector').querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input,textarea')].map(field => ({ id: field.id, name: field.name, value: field.value, checked: field instanceof HTMLInputElement && field.checked })) : [];
+  return () => {
+    if (!id || selected?.id !== id) return;
+    for (const section of sections) {
+      const replacement = $('#inspector').querySelector(`[data-property-section="${section.dataset.propertySection}"]`);
+      replacement?.replaceWith(section);
+    }
+    for (const draft of diagramFields) {
+      const field = [...$('#inspector').querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input,textarea')]
+        .find(input => draft.id ? input.id === draft.id : input.name === draft.name && input.value === draft.value);
+      if (field) { field.value = draft.value; if (field instanceof HTMLInputElement) field.checked = draft.checked; }
+    }
+  };
+}
+
 function setSelectedLock(locked: boolean) {
   if (mode !== 'edit') return;
   const cells = selectedCells(), nodes = cells.filter((cell) => cell.isNode());
   if (!nodes.length) return;
   const changed = nodes.filter((node) => !!(diagramOf(node)?.locked || node.getData<DeviceData>().locked) !== locked).length;
   const inherited = nodes.filter((node) => isDeviceNode(node) && groupOf(snapshot(), node.id)?.locked).length;
+  const restoreDraft = preserveInspectorDraft();
   executeEditorCommand(setPositionLocks(captureDocument(), selectedIds(), locked), cells.map((cell) => cell.id));
+  restoreDraft();
   toast(`${changed ? `已${locked ? '锁定' : '解锁'} ${changed} 个对象的位置` : '所选对象的锁定状态未改变'}${!locked && inherited ? '；所属区域仍锁定，请解锁区域' : ''}`);
 }
 
@@ -1105,7 +1142,8 @@ $('#distribute-command').addEventListener('change', (event) => {
 function changeLayer(front: boolean) {
   if (mode !== 'edit') return;
   const document = captureDocument(); document.topology = reorder(document.topology, selectedIds(), front);
-  executeEditorCommand(parseDocument(document), [...selectedIds()]); toast(front ? '已置顶，可撤销' : '已置底，可撤销');
+  const restoreDraft = preserveInspectorDraft();
+  executeEditorCommand(parseDocument(document), [...selectedIds()]); restoreDraft(); toast(front ? '已置顶，可撤销' : '已置底，可撤销');
 }
 $('#layer-command').addEventListener('change', (event) => {
   const select = event.target as HTMLSelectElement, value = select.value; select.value = '';
@@ -1134,7 +1172,13 @@ document.addEventListener('mousedown', (event) => { if (!(event.target as Elemen
 window.addEventListener('resize', () => closeContextMenu());
 window.addEventListener('scroll', (event) => { if (!$('#canvas-context-menu').contains(event.target as globalThis.Node)) closeContextMenu(); }, true);
 
+function finishEdgeEdit() {
+  if (!edgeEditing) return;
+  edgeEditing = false; edgeEditBatches.clear(); flushHistory();
+}
+
 function finishGroupDrag() {
+  finishEdgeEdit();
   if (!dragSession) return;
   const session = dragSession;
   dragSession = null; flushHistory();
@@ -1315,8 +1359,8 @@ const actions: Record<string, () => void> = {
   save: () => { if (persistCurrent()) toast('当前拓扑已保存到拓扑库'); },
   export: () => { void exportTopology('json'); },
   import: () => $<HTMLInputElement>('#import-file').click(),
-  undo: () => { if (mode !== 'edit') return; flushHistory(); const previous = editorHistory.undo(); if (!previous) return; applyEditorDocument(previous); scheduleDraftSave(); updateHistoryButtons(); toast('已撤销上一步'); },
-  redo: () => { if (mode !== 'edit') return; flushHistory(); const next = editorHistory.redo(); if (!next) return; applyEditorDocument(next); scheduleDraftSave(); updateHistoryButtons(); toast('已重做'); },
+  undo: () => { if (mode !== 'edit') return; finishGroupDrag(); flushHistory(); const previous = editorHistory.undo(); if (!previous) return; applyEditorDocument(previous); scheduleDraftSave(); updateHistoryButtons(); toast('已撤销上一步'); },
+  redo: () => { if (mode !== 'edit') return; finishGroupDrag(); flushHistory(); const next = editorHistory.redo(); if (!next) return; applyEditorDocument(next); scheduleDraftSave(); updateHistoryButtons(); toast('已重做'); },
   delete: deleteSelected,
   pause: () => { if (telemetry.mode !== 'simulation') return; paused = !paused; syncDataControls(); updateRuntime(); },
   outage: () => {
@@ -1371,6 +1415,11 @@ const actions: Record<string, () => void> = {
       const node = portEditorNode;
       if (!graph.getCellById(node.id)) throw new Error('节点已不存在');
       const configuration = portEditor.read();
+      if (!portEditor.hasChanges()) {
+        $<HTMLDialogElement>('#modal').close();
+        toast('端口配置未修改');
+        return;
+      }
       const old = node.getData<DeviceData>();
       assertConnectedPortsPreserved(devicePorts(old), configuration.ports, connectedPortIds(node));
       flushHistory();
@@ -1379,7 +1428,9 @@ const actions: Record<string, () => void> = {
       updateNodeGeometry(node);
       flushHistory();
       $<HTMLDialogElement>('#modal').close();
-      updateRuntime(); selectCell(node);
+      updateRuntime(); applyHighlight();
+      // Port changes are a separate form: keep pending node properties intact.
+      $('#inspector [data-property-section="ports"]').outerHTML = renderDevicePorts(node);
       toast('端口配置已应用，可调整周围走线后保存布局');
     } catch (error) { portEditor?.showError(error instanceof Error ? error.message : '端口配置不合法'); }
   },
@@ -1537,7 +1588,21 @@ graph.on('node:resized', () => {
 graph.on('node:contextmenu', ({ node, e }) => { e.preventDefault(); e.stopPropagation(); openContextMenu(e.clientX, e.clientY, node); });
 graph.on('edge:contextmenu', ({ edge, e }) => { e.preventDefault(); e.stopPropagation(); openContextMenu(e.clientX, e.clientY, edge); });
 graph.on('blank:contextmenu', ({ e }) => { e.preventDefault(); e.stopPropagation(); openContextMenu(e.clientX, e.clientY, null); });
-document.addEventListener('mouseup', () => { if (dragSession) queueMicrotask(finishGroupDrag); });
+// X6 vertex and segment tools stop propagation, so node drag events do not
+// cover them. Nested add/move batches belong to the same undo operation.
+graph.on('batch:start', ({ name, data }) => {
+  if (loading || mode !== 'edit' || !data.ui || !['add-vertex', 'move-vertex', 'move-segment'].includes(name)) return;
+  if (!edgeEditing) { finishGroupDrag(); flushHistory(); clearTimeout(recordTimer); clearTimeout(draftSaveTimer); edgeEditing = true; }
+  const key = `${data.toolId}:${name}`;
+  edgeEditBatches.set(key, (edgeEditBatches.get(key) || 0) + 1);
+});
+graph.on('batch:stop', ({ name, data }) => {
+  const key = `${data.toolId}:${name}`, count = edgeEditBatches.get(key);
+  if (!count) return;
+  if (count > 1) edgeEditBatches.set(key, count - 1); else edgeEditBatches.delete(key);
+  if (!edgeEditBatches.size) finishEdgeEdit();
+});
+document.addEventListener('mouseup', () => { if (dragSession || edgeEditing) queueMicrotask(finishGroupDrag); });
 window.addEventListener('blur', finishGroupDrag);
 graph.on('node:added', recordChange);
 graph.on('cell:removed', recordChange);

@@ -134,6 +134,19 @@ describe('拓扑配置保存与导入', () => {
     expect(deviceGeometry(data).ports).toEqual([]);
   });
 
+  test('仅覆写端口名称保留原始偏移，明确间距或无偏移的同侧端口继续等距排列', () => {
+    const data = fixture().topology.nodes.find((n) => n.id === 'sw-01')!.data;
+    const original = deviceGeometry(data);
+    const named = { ...data, ports: devicePorts(data).map(port => ({ ...port, label: `业务 ${port.label}` })) };
+    const geometry = deviceGeometry(named);
+    expect(geometry.ports.map(({ id, x, y }) => ({ id, x, y }))).toEqual(original.ports.map(({ id, x, y }) => ({ id, x, y })));
+    expect(geometry.ports[0].label).toBe(`业务 ${original.ports[0].label}`);
+    const spacing = deviceGeometry({ ...named, portSpacing: 24 });
+    expect(spacing.ports.find(port => port.id === 'ge1')!.y).toBe(24);
+    const unpositioned = deviceGeometry({ ...named, ports: named.ports.map(({ offset: _offset, ...port }) => port) });
+    expect(unpositioned).toEqual({ ...spacing, ports: spacing.ports.map(({ offset: _offset, ...port }) => port) });
+  });
+
   test('节点按参数数量收紧高度，连接点随边界变化且配置不被改写', () => {
     const node = fixture().topology.nodes.find((n) => n.id === 'sw-01')!;
     const original = structuredClone(node);

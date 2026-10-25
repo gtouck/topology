@@ -31,6 +31,9 @@ body[data-sidebar-collapsed="true"] { --sidebar-size:56px; }
 .inspector,body[data-mode="edit"] .inspector { width:var(--inspector-width); min-width:var(--inspector-width); border-left:0; }
 .inspector-toggle { position:absolute; right:9px; top:8px; z-index:23; width:27px; height:27px; border:1px solid #dce6de; background:#fff; color:#5a7864; box-shadow:0 1px 4px #2546300a; }
 .inspector-toggle:hover { background:#edf5ef; }
+/* When the toggle floats over the canvas, leave its hit area outside navigation. */
+body[data-inspector-collapsed="true"] .canvas-wrap .gn-bar { max-width:calc(100% - 60px); }
+@media(max-width:650px) { .canvas-wrap .graph-navigation .gn-bar { max-width:calc(100% - 58px); } }
 .inspector-header { padding-right:45px; font-size:12px; color:#45634e; }
 .inspector-header .icon-button { width:24px; }
 .inspector .detail-identity { padding:16px 17px 14px; }

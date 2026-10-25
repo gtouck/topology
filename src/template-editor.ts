@@ -16,7 +16,7 @@ export class TemplateEditor {
     this.portEditor = new PortEditor(root.querySelector('#template-port-editor')!, { kind: initial.id, title: initial.label, deviceId: 'preview', address: '', status: 'normal', visibleMetrics: [], ports: structuredClone(initial.ports) }, connected);
     // Spacing is a per-node override in v3, so do not offer an unsaved template setting.
     root.querySelector('#port-spacing')?.closest('label')?.remove();
-    root.querySelector('.port-layout-settings p')!.textContent = '同侧按列表顺序排列。最小间距可在节点的端口配置中单独调整。';
+    root.querySelector('.port-layout-settings p')!.textContent = '切换排布会更新全部端口预览，应用后生效。同侧按列表顺序排列；最小间距可在节点端口配置中调整。';
     root.onclick = event => {
       const button = (event.target as HTMLElement).closest<HTMLElement>('[data-template-action]'); if (!button) return;
       const metrics = this.metrics();
@@ -40,13 +40,13 @@ export class TemplateEditor {
   read() {
     const read = (id: string) => this.root.querySelector<HTMLInputElement>(`#${id}`)!.value.trim();
     if (!read('template-name')) { showFieldError('template-name', '请填写模板名称'); return; }
+    let ports: NodeTemplate['ports'];
+    try { ports = this.portEditor.read().ports; }
+    catch (error) { this.portEditor.showError(error instanceof Error ? error.message : '端口配置不合法'); return; }
     try {
       const metrics = this.metrics();
-      // Preserve original offsets if the port form has not changed its semantic content.
-      const ports = this.portEditor.read().ports;
-      const plain = (list: NodeTemplate['ports']) => list.map(({ id, label, side, kind }) => ({ id, label, side, kind }));
       return parseTemplate({ ...this.initial, label: read('template-name'), en: read('template-en'), model: read('template-model'), icon: read('template-icon'), metrics,
-        ports: JSON.stringify(plain(ports)) === JSON.stringify(plain(this.initial.ports)) ? this.initial.ports : ports });
+        ports });
     } catch (error) { showFieldError('template-metrics', error instanceof Error ? error.message : '模板配置不合法'); }
   }
 }
