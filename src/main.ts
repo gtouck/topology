@@ -136,7 +136,7 @@ $('#app').innerHTML = `
     </main>
   </div>
   <input type="file" id="import-file" accept=".json,application/json" hidden />
-  <dialog id="modal"><div class="modal-heading"><h2 id="modal-title"></h2>${button('close-modal', '关闭', 'X')}</div><div id="modal-content"></div><div class="modal-footer"><button class="button primary" data-action="close-modal">知道了</button></div></dialog>
+  <dialog id="modal" aria-labelledby="modal-title"><div class="modal-heading"><h2 id="modal-title"></h2></div><div id="modal-content"></div><div class="modal-footer"><button type="button" class="button" data-action="close-modal">关闭</button></div></dialog>
   <div class="toast" id="toast" role="status" hidden></div>
   <div id="canvas-context-menu" class="canvas-context-menu" role="menu" aria-label="画布菜单" hidden></div>
 `;
@@ -702,11 +702,14 @@ function toast(message: string, error = false) {
   el.classList.toggle('error', error); el.hidden = false;
   toastTimer = setTimeout(() => { el.hidden = true; }, 3500);
 }
-function showModal(title: string, content: string) {
+type ModalConfirmation = { action: string; danger?: boolean; documentId?: string };
+function showModal(title: string, content: string, confirmation?: ModalConfirmation) {
   portEditor = null; portEditorNode = null; templateEditor = null;
   const root = $('#modal-content'); root.onclick = null; root.oninput = null; root.onchange = null;
-  $('#modal').classList.remove('port-config-modal', 'library-modal', 'template-modal', 'publication-modal');
-  $('.modal-footer').innerHTML = '<button class="button primary" data-action="close-modal">知道了</button>';
+  $('#modal').classList.remove('port-config-modal', 'library-modal', 'template-modal', 'publication-modal', 'help-modal');
+  $('.modal-footer').innerHTML = confirmation
+    ? `<button type="button" class="button" data-action="close-modal">取消</button><button type="button" class="button ${confirmation.danger ? 'danger' : 'primary'}" ${confirmation.documentId !== undefined ? `data-document-action="${esc(confirmation.action)}" data-document-id="${esc(confirmation.documentId)}"` : `data-action="${esc(confirmation.action)}"`}>确定</button>`
+    : '<button type="button" class="button" data-action="close-modal">关闭</button>';
   $('#modal-title').textContent = title; $('#modal-content').innerHTML = content;
   const dialog = $<HTMLDialogElement>('#modal'); if (!dialog.open) dialog.showModal();
 }
@@ -904,7 +907,7 @@ function renderLibraryResults() {
 }
 function showDocumentInfo(id: string) {
   const doc = documentsForLibrary().find((d) => d.id === id)!;
-  showModal('拓扑信息', `<input type="hidden" id="metadata-document-id" value="${esc(id)}"/><label class="field">名称<input id="metadata-name" maxlength="100" value="${esc(doc.name)}" /></label><label class="field">分类<input id="metadata-category" maxlength="60" value="${esc(doc.category)}" list="document-categories" /></label><datalist id="document-categories">${Object.keys(categories).map((key) => `<option value="${key}">${categoryLabel(key)}</option>`).join('')}</datalist><label class="field">说明<textarea id="metadata-description" maxlength="1000" rows="4">${esc(doc.description)}</textarea></label><p class="modal-description">文件格式：Topology v3<br>文档 ID：${esc(doc.id)}</p><button class="button primary" data-action="apply-document-info">保存信息</button>`);
+  showModal('拓扑信息', `<input type="hidden" id="metadata-document-id" value="${esc(id)}"/><label class="field">名称<input id="metadata-name" maxlength="100" value="${esc(doc.name)}" /></label><label class="field">分类<input id="metadata-category" maxlength="60" value="${esc(doc.category)}" list="document-categories" /></label><datalist id="document-categories">${Object.keys(categories).map((key) => `<option value="${key}">${categoryLabel(key)}</option>`).join('')}</datalist><label class="field">说明<textarea id="metadata-description" maxlength="1000" rows="4">${esc(doc.description)}</textarea></label><p class="modal-description">文件格式：Topology v3<br>文档 ID：${esc(doc.id)}</p>`, { action: 'apply-document-info' });
 }
 function updatePublicationLabel() {
   const label = document.querySelector<HTMLElement>('#publication-label');
@@ -922,9 +925,8 @@ async function showPublication() {
   finishGroupDrag(); flushHistory(); await saveDraftNow(); if (!workspace) return;
   const current = workspace.published(activeDocument.id), entries = workspace.publications(activeDocument.id);
   const changed = !current || documentSignature(current.document) !== documentSignature(captureDocument());
-  showModal('发布与版本', `<p class="modal-description">${serverMode ? '发布保存在服务器，其他浏览器可登录查看。' : '发布保存在当前浏览器。'}自动草稿和“保存布局”不影响已发布展示；跨软件使用可导出发布配置或接入宿主存储。</p><div class="publication-summary"><strong>${current ? `当前发布 r${current.revision}` : '尚未发布'}</strong><span>${changed ? '当前草稿含未发布内容' : '草稿与当前发布内容一致'}</span><button class="button" data-action="preview-published" ${current ? '' : 'disabled'}>打开当前发布</button><button class="button" data-action="export-published" ${current ? '' : 'disabled'}>导出发布配置</button></div><input id="publication-expected-revision" type="hidden" value="${current?.revision ?? 0}"/><label class="field">本次发布说明<textarea id="publication-note" maxlength="500" rows="2" placeholder="例如：补充机房业务网连接"></textarea></label><h3>发布历史</h3><p class="field-hint">回滚将创建新的发布版本，不覆盖草稿。每图最多保留 10 版，容量不足时清理较早历史，当前发布始终保留。</p><div class="publication-list">${entries.map(p => `<article class="publication-entry" data-publication-id="${esc(p.id)}"><div><strong>r${p.revision}${current?.id === p.id ? ' · 当前发布' : ''}</strong><time>${esc(new Date(p.publishedAt).toLocaleString('zh-CN'))}</time></div><p>${esc(p.note || '无发布说明')}</p><small>${p.document.topology.nodes.length} 个节点 · ${p.document.topology.edges.length} 条连接${p.rollbackOf ? ` · 回滚来源 ${esc(p.rollbackOf)}` : ''}</small><div class="publication-actions"><button class="button" data-publication-action="preview" data-publication-revision="${p.revision}">查看此版</button><button class="button" data-publication-action="rollback" data-publication-id="${esc(p.id)}" ${p.id === current?.id ? 'disabled' : ''}>回滚到此版</button></div></article>`).join('') || '<p class="muted">还没有发布版本。发布当前配置后，展示入口才能使用。</p>'}</div>`);
+  showModal('发布与版本', `<p class="modal-description">${serverMode ? '发布保存在服务器，其他浏览器可登录查看。' : '发布保存在当前浏览器。'}自动草稿和“保存布局”不影响已发布展示；跨软件使用可导出发布配置或接入宿主存储。</p><div class="publication-summary"><strong>${current ? `当前发布 r${current.revision}` : '尚未发布'}</strong><span>${changed ? '当前草稿含未发布内容' : '草稿与当前发布内容一致'}</span><button class="button" data-action="preview-published" ${current ? '' : 'disabled'}>打开当前发布</button><button class="button" data-action="export-published" ${current ? '' : 'disabled'}>导出发布配置</button></div><input id="publication-expected-revision" type="hidden" value="${current?.revision ?? 0}"/><label class="field">本次发布说明<textarea id="publication-note" maxlength="500" rows="2" placeholder="例如：补充机房业务网连接"></textarea></label><h3>发布历史</h3><p class="field-hint">回滚将创建新的发布版本，不覆盖草稿。每图最多保留 10 版，容量不足时清理较早历史，当前发布始终保留。</p><div class="publication-list">${entries.map(p => `<article class="publication-entry" data-publication-id="${esc(p.id)}"><div><strong>r${p.revision}${current?.id === p.id ? ' · 当前发布' : ''}</strong><time>${esc(new Date(p.publishedAt).toLocaleString('zh-CN'))}</time></div><p>${esc(p.note || '无发布说明')}</p><small>${p.document.topology.nodes.length} 个节点 · ${p.document.topology.edges.length} 条连接${p.rollbackOf ? ` · 回滚来源 ${esc(p.rollbackOf)}` : ''}</small><div class="publication-actions"><button class="button" data-publication-action="preview" data-publication-revision="${p.revision}">查看此版</button><button class="button" data-publication-action="rollback" data-publication-id="${esc(p.id)}" ${p.id === current?.id ? 'disabled' : ''}>回滚到此版</button></div></article>`).join('') || '<p class="muted">还没有发布版本。发布当前配置后，展示入口才能使用。</p>'}</div>`, { action: 'publish-current' });
   $('#modal').classList.add('publication-modal');
-  $('.modal-footer').innerHTML = '<button class="button" data-action="close-modal">关闭</button><button class="button primary" data-action="publish-current">发布当前草稿</button>';
 }
 function handlePublicationFailure(error: unknown) {
   if (error instanceof WorkspaceConflict) storageFailure(error);
@@ -989,7 +991,7 @@ async function handleDocumentAction(action: string, id: string) {
   if (action === 'viewer') { await openIndependentViewer(id); return; }
   if (action === 'delete') {
     const doc = library.documents.find((d) => d.id === id)!;
-    showModal('删除拓扑', `<p class="modal-description">删除“${esc(doc.name)}”及其草稿、历史和发布版本。需要保留时请先打开并导出通用文件。</p><button class="button danger" data-document-action="confirm-delete" data-document-id="${esc(id)}">确认删除这张拓扑</button>`); return;
+    showModal('删除拓扑', `<p class="modal-description">删除“${esc(doc.name)}”及其草稿、历史和发布版本。需要保留时请先打开并导出通用文件。</p>`, { action: 'confirm-delete', documentId: id, danger: true }); return;
   }
   if (!(await saveDraftNow())) return;
   if (action === 'open') {
@@ -1086,9 +1088,8 @@ function showTemplateEditor(template?: NodeTemplate) {
   const nodes = snapshot().nodes.filter(n => n.data.kind === initial.id);
   const inherited = new Set(nodes.filter(n => n.data.ports === undefined).map(n => n.id));
   const connected = new Set(snapshot().edges.flatMap(e => [e.source, e.target]).filter(e => inherited.has(e.cell)).map(e => e.port));
-  showModal(template ? '编辑节点模板' : '新建节点模板', '');
+  showModal(template ? '编辑节点模板' : '新建节点模板', '', { action: 'create-template' });
   $('#modal').classList.add('template-modal');
-  $('.modal-footer').innerHTML = '<button class="button" data-action="close-modal">取消</button><button class="button primary" data-action="create-template">应用模板</button>';
   templateEditor = new TemplateEditor($('#modal-content'), initial, nodes.length, connected);
 }
 function showTemplateManager() {
@@ -1228,7 +1229,7 @@ function showSpacingDialog() {
   if (mode !== 'edit') return;
   const nodes = selectedCells().filter(isDeviceNode), movable = nodes.filter((node) => !cellLocked(node));
   if (movable.length < 2) { toast('指定间距至少需要两个未锁定节点', true); return; }
-  showModal('指定节点间距', `<p class="modal-description">固定排序后的第一个节点，按实际尺寸依次排布，另一坐标轴保持原位。${nodes.length - movable.length ? `将跳过 ${nodes.length - movable.length} 个锁定节点。` : ''}</p><label class="field">方向<select id="layout-axis"><option value="horizontal">水平间距</option><option value="vertical">垂直间距</option></select></label><label class="field">节点之间的空隙（px）<input id="layout-gap" type="number" min="0" max="${MAX_LAYOUT_GAP}" step="any" value="24" /></label><p id="spacing-error" class="spacing-error" role="alert"></p><button class="button primary" data-action="apply-spacing">应用间距</button>`);
+  showModal('指定节点间距', `<p class="modal-description">固定排序后的第一个节点，按实际尺寸依次排布，另一坐标轴保持原位。${nodes.length - movable.length ? `将跳过 ${nodes.length - movable.length} 个锁定节点。` : ''}</p><label class="field">方向<select id="layout-axis"><option value="horizontal">水平间距</option><option value="vertical">垂直间距</option></select></label><label class="field">节点之间的空隙（px）<input id="layout-gap" type="number" min="0" max="${MAX_LAYOUT_GAP}" step="any" value="24" /></label><p id="spacing-error" class="spacing-error" role="alert"></p>`, { action: 'apply-spacing' });
 }
 
 function closeContextMenu(focus = false) {
@@ -1422,7 +1423,7 @@ const actions: Record<string, () => unknown> = {
   'retry-draft': async () => { if (await retryDraftSave()) toast(serverMode ? '已完成重试，与服务器同步' : '草稿已重新保存'); },
   'export-current-backup': () => { void exportTopology('json'); },
   'export-reload-backup': () => { void exportTopology('json'); },
-  'storage-reload': () => showModal('重新读取拓扑库', `<p class="modal-description">${serverMode ? '重新读取会加载服务器最新内容。未确认的修改会保留为本机恢复副本，仍建议先导出备份。' : '重新读取会替换当前画布，未成功保存的内容无法自动保留。请先导出当前图作为备份。'}</p><div class="storage-reload-actions"><button class="button" data-action="export-reload-backup">导出当前图</button><button class="button primary" data-action="confirm-storage-reload">重新读取并替换画布</button></div>`),
+  'storage-reload': () => showModal('重新读取拓扑库', `<p class="modal-description">${serverMode ? '重新读取会加载服务器最新内容。未确认的修改会保留为本机恢复副本，仍建议先导出备份。' : '重新读取会替换当前画布，未成功保存的内容无法自动保留。请先导出当前图作为备份。'}</p><div class="storage-reload-actions"><button class="button" data-action="export-reload-backup">导出当前图</button></div>`, { action: 'confirm-storage-reload' }),
   'confirm-storage-reload': () => { cacheRecovery(); reloadRequested = true; location.reload(); },
   'export-options': () => showModal('导出拓扑', `<p class="modal-description">导出整张拓扑，包含尚未保存的修改。图片和网页保留导出时的参数、状态快照。</p><div class="export-formats">${[
     ['json', 'JSON', '通用拓扑文件', '包含节点模板和数据绑定，可导入后继续编辑。'],
@@ -1436,7 +1437,7 @@ const actions: Record<string, () => unknown> = {
   library: showLibrary,
   viewer: () => openIndependentViewer(activeDocument.id),
   'document-info': () => showDocumentInfo(activeDocument.id),
-  'new-document': () => showModal('新建拓扑', `<label class="field">拓扑名称<input id="new-document-name" maxlength="100" placeholder="例如：运控中心机房" /></label><label class="field">起始内容<select id="new-document-kind">${Object.entries(categories).map(([key, label]) => `<option value="${key}">${label}${key === 'general' ? ' · 空白画布' : ' · 示例'}</option>`).join('')}</select></label><p class="modal-description">每张图独立保存。通用节点模板可用于节点连接、业务逻辑和子系统关系。</p><button class="button primary" data-action="create-document">创建并打开</button>`),
+  'new-document': () => showModal('新建拓扑', `<label class="field">拓扑名称<input id="new-document-name" maxlength="100" placeholder="例如：运控中心机房" /></label><label class="field">起始内容<select id="new-document-kind">${Object.entries(categories).map(([key, label]) => `<option value="${key}">${label}${key === 'general' ? ' · 空白画布' : ' · 示例'}</option>`).join('')}</select></label><p class="modal-description">每张图独立保存。通用节点模板可用于节点连接、业务逻辑和子系统关系。</p>`, { action: 'create-document' }),
   'create-document': async () => {
     clearFieldErrors($('#modal-content'));
     const name = $<HTMLInputElement>('#new-document-name').value.trim();
@@ -1469,7 +1470,7 @@ const actions: Record<string, () => unknown> = {
       await showLibrary();
     } catch (error) { storageFailure(error); toast(storageError, true); }
   },
-  'data-settings': () => showModal('数据接入设置', `<p class="modal-description">宿主数据按节点、链路分别计时。过期时隐藏参数并停止流转；重连后需收到新数据才恢复。设置仅作用于当前页面，不写入拓扑文件。</p><label class="field">无新数据超时（秒，0 表示关闭）<input id="freshness-seconds" type="number" min="0" max="86400" step="0.1" value="${telemetry.freshness.staleAfterMs / 1000}" /></label><label class="field">数据连接状态<select id="freshness-connection"><option value="connected" ${telemetry.freshness.connection === 'connected' ? 'selected' : ''}>已连接</option><option value="disconnected" ${telemetry.freshness.connection === 'disconnected' ? 'selected' : ''}>已中断</option></select></label><button class="button primary" data-action="apply-data-settings">应用接入设置</button>`),
+  'data-settings': () => showModal('数据接入设置', `<p class="modal-description">宿主数据按节点、链路分别计时。过期时隐藏参数并停止流转；重连后需收到新数据才恢复。设置仅作用于当前页面，不写入拓扑文件。</p><label class="field">无新数据超时（秒，0 表示关闭）<input id="freshness-seconds" type="number" min="0" max="86400" step="0.1" value="${telemetry.freshness.staleAfterMs / 1000}" /></label><label class="field">数据连接状态<select id="freshness-connection"><option value="connected" ${telemetry.freshness.connection === 'connected' ? 'selected' : ''}>已连接</option><option value="disconnected" ${telemetry.freshness.connection === 'disconnected' ? 'selected' : ''}>已中断</option></select></label>`, { action: 'apply-data-settings' }),
   'apply-data-settings': () => {
     clearFieldErrors($('#modal-content'));
     try {
@@ -1543,9 +1544,8 @@ const actions: Record<string, () => unknown> = {
   'configure-ports': () => {
     if (mode !== 'edit' || !selected?.isNode()) return;
     const node = selected;
-    showModal(`配置端口 · ${node.getData<DeviceData>().title}`, '');
+    showModal(`配置端口 · ${node.getData<DeviceData>().title}`, '', { action: 'apply-ports' });
     $('#modal').classList.add('port-config-modal');
-    $('.modal-footer').innerHTML = '<button class="button" data-action="close-modal">取消</button><button class="button primary" data-action="apply-ports">应用端口配置</button>';
     portEditorNode = node;
     portEditor = new PortEditor($('#modal-content'), node.getData<DeviceData>(), connectedPortIds(node));
   },
@@ -1596,10 +1596,14 @@ const actions: Record<string, () => unknown> = {
     if (document.fullscreenElement) document.exitFullscreen().catch(() => toast('无法退出全屏', true));
     else panel.requestFullscreen().catch(() => toast('浏览器未允许全屏，可使用浏览器全屏功能', true));
   },
-  help: () => showModal('使用指南', `<p class="modal-description">这是用于制作和复用拓扑的工作台。编辑节点与连接，在查看模式下验证参数及状态。</p><ol class="help-list"><li><strong>编辑布局</strong><p>切换“拓扑编辑”。点击或拖入左侧节点；拖动节点时会按 10 px 网格吸附。</p></li><li><strong>连接节点</strong><p>从节点边缘的彩色端口拖向另一个同色端口。紫色 RF、金色 IF、绿色以太网。网络允许形成环路，禁止节点连到自身。</p></li><li><strong>多选与复制</strong><p>使用框选工具或按住 Ctrl、⌘、Shift 点选节点。Ctrl / ⌘ C / V 复制粘贴，Ctrl / ⌘ D 创建副本。内部连线随节点复制；副本生成新的业务对象 ID，需重新确认绑定。拖动已选节点整体移动，方向键微移，Shift 加速。</p></li><li><strong>调整走线</strong><p>点击连线，拖动圆点或线段中间的绿色手柄。点击线条增加拐点，双击拐点删除。走线采用手动控制，拖动节点后可按需调整邻接线段。</p></li><li><strong>对齐与锁定</strong><p>工具栏和右键菜单支持六种对齐、等距分布和指定间距；锁定节点会跳过移动及批量删除，所有批量操作可一步撤销。</p></li><li><strong>工作区与属性</strong><p>顶部左侧按钮折叠节点库，画布右上角按钮折叠属性栏。拖动侧栏分隔线调整宽度，方向键微调，双击恢复默认。属性按分区展开，输入错误会就地提示。</p></li><li><strong>保存与恢复</strong><p>编辑停止后自动保存草稿，刷新或切图自动恢复；“保存布局”建立手动保存版本。“草稿与历史”可恢复旧版本，恢复操作可撤销。“导出 / 导入”用 JSON 迁移配置。</p></li><li><strong>查看模式</strong><p>每两秒更新模拟参数，布局保持不变。点击节点查看详情；点击“离线演示”验证状态变化。</p></li></ol><div class="shortcut-list"><span>Ctrl / ⌘ S <b>保存</b></span><span>Ctrl / ⌘ Z <b>撤销</b></span><span>Delete <b>删除选中</b></span><span>Esc <b>取消选择</b></span><span>E / M <b>编辑 / 查看</b></span></div><button class="button" data-action="reset">${icon('RotateCcw', 15)}恢复示例拓扑</button>`),
+  help: () => {
+    showModal('使用指南', `<p class="modal-description">这是用于制作和复用拓扑的工作台。编辑节点与连接，在查看模式下验证参数及状态。</p><ol class="help-list"><li><strong>编辑布局</strong><p>切换“拓扑编辑”。点击或拖入左侧节点；拖动节点时会按 10 px 网格吸附。</p></li><li><strong>连接节点</strong><p>从节点边缘的彩色端口拖向另一个同色端口。紫色 RF、金色 IF、绿色以太网。网络允许形成环路，禁止节点连到自身。</p></li><li><strong>多选与复制</strong><p>使用框选工具或按住 Ctrl、⌘、Shift 点选节点。Ctrl / ⌘ C / V 复制粘贴，Ctrl / ⌘ D 创建副本。内部连线随节点复制；副本生成新的业务对象 ID，需重新确认绑定。拖动已选节点整体移动，方向键微移，Shift 加速。</p></li><li><strong>调整走线</strong><p>点击连线，拖动圆点或线段中间的绿色手柄。点击线条增加拐点，双击拐点删除。走线采用手动控制，拖动节点后可按需调整邻接线段。</p></li><li><strong>对齐与锁定</strong><p>工具栏和右键菜单支持六种对齐、等距分布和指定间距；锁定节点会跳过移动及批量删除，所有批量操作可一步撤销。</p></li><li><strong>工作区与属性</strong><p>顶部左侧按钮折叠节点库，画布右上角按钮折叠属性栏。拖动侧栏分隔线调整宽度，方向键微调，双击恢复默认。属性按分区展开，输入错误会就地提示。</p></li><li><strong>保存与恢复</strong><p>编辑停止后自动保存草稿，刷新或切图自动恢复；“保存布局”建立手动保存版本。“草稿与历史”可恢复旧版本，恢复操作可撤销。“导出 / 导入”用 JSON 迁移配置。</p></li><li><strong>查看模式</strong><p>每两秒更新模拟参数，布局保持不变。点击节点查看详情；点击“离线演示”验证状态变化。</p></li></ol><div class="shortcut-list"><span>Ctrl / ⌘ S <b>保存</b></span><span>Ctrl / ⌘ Z <b>撤销</b></span><span>Delete <b>删除选中</b></span><span>Esc <b>取消选择</b></span><span>E / M <b>编辑 / 查看</b></span></div><button class="button" data-action="reset">${icon('RotateCcw', 15)}恢复示例拓扑</button>`);
+    $('#modal').classList.add('help-modal');
+  },
 
   'close-modal': () => $<HTMLDialogElement>('#modal').close(),
-  reset: () => { flushHistory(); resetOutage(); const sample = sampleDocument(activeDocument.category); applyEditorDocument({ ...activeDocument, templates: sample.templates, topology: sample.topology }, true); flushHistory(); $<HTMLDialogElement>('#modal').close(); setMode(mode); toast('已恢复当前分类的示例，可撤销'); },
+  reset: () => showModal('恢复示例拓扑', '<p class="modal-description">将当前图的节点、连接和模板替换为当前分类的示例。确认后可通过撤销恢复原布局。</p>', { action: 'confirm-reset' }),
+  'confirm-reset': () => { flushHistory(); resetOutage(); const sample = sampleDocument(activeDocument.category); applyEditorDocument({ ...activeDocument, templates: sample.templates, topology: sample.topology }, true); flushHistory(); $<HTMLDialogElement>('#modal').close(); setMode(mode); toast('已恢复当前分类的示例，可撤销'); },
 };
 
 document.addEventListener('click', async (event) => {

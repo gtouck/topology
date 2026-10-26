@@ -57,6 +57,10 @@ body[data-sidebar-collapsed="true"] .device-library { gap:6px; }
 .property-section>summary>span { margin-left:auto; color:#71856e; font-size:10px; font-weight:400; }
 .property-content { padding:1px 17px 15px; }
 .property-content>.field:last-child { margin-bottom:0; }
+#modal[open] { display:flex; flex-direction:column; overflow:hidden; }
+#modal .modal-heading,#modal .modal-footer { flex-shrink:0; }
+#modal #modal-content { overflow:auto; min-height:0; }
+#modal .modal-footer { gap:8px; }
 .inspector .field,#modal-content .field { font-size:12px; color:#546d55; line-height:1.6; }
 .inspector .field>input,.inspector .field>select,.inspector .field>textarea,#modal-content .field>input,#modal-content .field>select,#modal-content .field>textarea { font-size:12px; color:#3d5843; padding:8px 9px; border-color:#cfdccd; background:#fff; }
 .inspector .field>textarea,#modal-content .field>textarea { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; line-height:1.7; }
@@ -86,6 +90,16 @@ body[data-sidebar-collapsed="true"] .device-library { gap:6px; }
 .panel-footer { color:#6c806c; }
 .bottom-note { color:#748571; }
 .library-modal { width:960px; }
+.help-modal { width:960px; }
+.help-modal .help-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px 36px; padding-left:20px; }
+.help-modal .help-list li { margin:0; padding-left:4px; min-width:0; }
+.help-modal .help-list strong { display:block; font-size:13px; line-height:1.6; }
+.help-modal .help-list p { font-size:12px; line-height:1.8; }
+.help-modal .shortcut-list { grid-template-columns:repeat(3,minmax(0,1fr)); font-size:11px; gap:12px 16px; }
+@media (max-width:720px) {
+  .help-modal .help-list { grid-template-columns:minmax(0,1fr); gap:18px; }
+  .help-modal .shortcut-list { grid-template-columns:repeat(2,minmax(0,1fr)); font-size:10px; }
+}
 .library-dialog-heading { margin-bottom:17px; }
 .library-dialog-heading p { color:#6f816a; font-size:12px; }
 .library-filters { display:flex; gap:12px; align-items:flex-end; margin-bottom:12px; }

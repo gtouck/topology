@@ -81,7 +81,8 @@ test('交互审计：全屏仍可操作导出弹窗，取消和退出保持文�
   await expect.poll(() => page.evaluate(() => !!document.fullscreenElement)).toBe(true);
   await page.locator('[data-action="export-options"]').click();
   await expect(page.locator('#modal-title')).toHaveText('导出拓扑');
-  await page.locator('.modal-heading [data-action="close-modal"]').click();
+  await expect(page.locator('#modal [data-action="close-modal"]')).toHaveCount(1);
+  await page.locator('.modal-footer [data-action="close-modal"]').click();
   await expect(page.locator('#modal')).not.toBeVisible();
   await page.locator('[data-action="fullscreen"]').click();
   await expect.poll(() => page.evaluate(() => !!document.fullscreenElement)).toBe(false);
