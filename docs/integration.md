@@ -386,7 +386,7 @@ window.addEventListener('topology:node-click', (event) => {
 
 PNG 与 SVG 在同一导出窗口下载，都是导出时的静态参数、状态快照。SVG 使用纯矢量图形，无外部样式、图片或 `foreignObject`，节点标题及数值可能因目标软件的可用字体产生细微差异。
 
-0.7.0 提供 Bun + SQLite 持久化及单管理员登录；多用户权限和实时协作仍未接入。服务器/API、登录及旧库迁移见 [服务器说明](server.md)。服务器展示页读取登录后的共享库，当前发布每 5 秒检查更新，固定发布链接不跟随。独立 SDK、PNG/SVG 和单文件 HTML 不依赖服务器或登录。
+0.7.0 提供 Bun + SQLite 持久化及单管理员登录；多用户权限和实时协作仍未接入。服务器/API、登录及完整库备份导入见 [服务器说明](server.md)。服务器展示页读取登录后的共享库，当前发布每 5 秒检查更新，固定发布链接不跟随。独立 SDK、PNG/SVG 和单文件 HTML 不依赖服务器或登录。
 
 ## 组件包验证与维护
 
@@ -399,3 +399,5 @@ PNG 与 SVG 在同一导出窗口下载，都是导出时的静态参数、状�
 服务器 API 管理拓扑定义及草稿/发布；设备采集值仍通过现有 `setData` / `updateData`、`setLinkData` / `updateLinkData` 传入，不写入文档数据库。工作台异步存储确认不改变这些宿主运行数据 API。
 
 宿主可在自己的后端获取 `GET /api/workspace` 的 `workspace.publishing.entries`，按 `documentId` 取当前发布，再把其 `document` 交给 `TopologyViewer`；或实现已有 `PublicationRepository` 接口。接口需要登录会话，不提供匿名公开库，也不要把管理员密码放入宿主前端。跨系统部署可由业务后端代理访问，或继续用导出的发布 JSON。精确命令与冲突返回见 `shared/api.ts` 和 [服务器 API](server.md#api-与展示接入)。
+
+服务器开发版本现已移除浏览器旧存档迁移。完整库备份使用 `POST /api/workspace/commands` 的 `importWorkspace` 命令，参数为 `{ workspace }`；原 `migrateWorkspace` 命令不再接受。客户端不自动读取旧浏览器拓扑库，未同步草稿恢复和独立组件运行数据 API 保持现有行为。

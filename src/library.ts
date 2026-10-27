@@ -1,5 +1,4 @@
 import { createDocument, newId, parseDocument, sampleDocument, type TopologyDocument } from './document';
-import { STORAGE_KEY } from './topology';
 
 export const LIBRARY_KEY = 'topology-workspace-v1';
 export interface TopologyLibrary { version: 1; activeId: string; documents: TopologyDocument[] }
@@ -14,15 +13,13 @@ export function parseLibrary(input: unknown): TopologyLibrary {
   return { version: 1, activeId: library.activeId, documents };
 }
 
-export function loadLibrary(storage: LibraryStorage): { library: TopologyLibrary; migrated: boolean } {
+export function loadLibrary(storage: LibraryStorage): { library: TopologyLibrary } {
   const saved = storage.getItem(LIBRARY_KEY);
-  if (saved !== null) return { library: parseLibrary(JSON.parse(saved)), migrated: false };
-  const legacy = storage.getItem(STORAGE_KEY);
-  const document = legacy ? parseDocument(JSON.parse(legacy)) : sampleDocument('ground-station');
+  if (saved !== null) return { library: parseLibrary(JSON.parse(saved)) };
+  const document = sampleDocument('ground-station');
   const library: TopologyLibrary = { version: 1, activeId: document.id, documents: [document] };
-  // Keep the original v1 key intact as a recovery copy.
   storage.setItem(LIBRARY_KEY, JSON.stringify(library));
-  return { library, migrated: legacy !== null };
+  return { library };
 }
 
 export function saveLibrary(storage: LibraryStorage, library: TopologyLibrary) {

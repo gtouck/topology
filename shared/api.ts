@@ -12,7 +12,7 @@ export type WorkspaceCommand =
   | { type: 'discardDraft'; documentId: string }
   | { type: 'publish'; document: TopologyDocument; expectedPublicationRevision: number; note?: string }
   | { type: 'rollbackPublication'; documentId: string; publicationId: string; expectedPublicationRevision: number; note?: string }
-  | { type: 'migrateWorkspace'; workspace: Workspace };
+  | { type: 'importWorkspace'; workspace: Workspace };
 export interface WorkspaceCommandRequest { expectedRevision: number; requestId: string; command: WorkspaceCommand }
-export type ApiErrorCode = 'AUTH_REQUIRED' | 'INVALID_CREDENTIALS' | 'INVALID_INPUT' | 'WORKSPACE_CONFLICT' | 'PUBLICATION_CONFLICT' | 'MIGRATION_CONFLICT' | 'REQUEST_ID_CONFLICT' | 'BODY_TOO_LARGE' | 'ORIGIN_REJECTED' | 'RATE_LIMITED' | 'NOT_FOUND' | 'METHOD_NOT_ALLOWED' | 'INTERNAL_ERROR';
+export type ApiErrorCode = 'AUTH_REQUIRED' | 'INVALID_CREDENTIALS' | 'INVALID_INPUT' | 'WORKSPACE_CONFLICT' | 'PUBLICATION_CONFLICT' | 'IMPORT_CONFLICT' | 'REQUEST_ID_CONFLICT' | 'BODY_TOO_LARGE' | 'ORIGIN_REJECTED' | 'RATE_LIMITED' | 'NOT_FOUND' | 'METHOD_NOT_ALLOWED' | 'INTERNAL_ERROR';
 export interface ApiErrorResponse { error: { code: ApiErrorCode; message: string; currentRevision?: number; conflictingIds?: string[] } }

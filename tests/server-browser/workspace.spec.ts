@@ -197,29 +197,46 @@ test('S14 子图导航等待确认期间屏蔽编辑快捷键，保留父图所�
   expect(await page.evaluate(() => window.stationPrototype.snapshot())).toEqual(before);
 });
 
-function migrationFixture() {
+function backupFixture() {
   const values = new Map<string, string>();
   const store = new WorkspaceStore({ getItem: key => values.get(key) ?? null, setItem: (key, value) => { values.set(key, value); } });
   const parent = sampleDocument('datacenter'), child = sampleDocument('satellite');
-  parent.name = '旧浏览器主图'; child.name = '旧浏览器子图'; parent.topology.nodes[0].data.childTopologyId = child.id;
-  const template = structuredClone(parent.templates[0]); template.id = 'migrated-template'; template.label = '本机定制模板'; parent.templates.push(template);
+  parent.name = '完整备份主图'; child.name = '完整备份子图'; parent.topology.nodes[0].data.childTopologyId = child.id;
+  const template = structuredClone(parent.templates[0]); template.id = 'backup-template'; template.label = '本机定制模板'; parent.templates.push(template);
   store.updateLibrary({ version: 1, activeId: parent.id, documents: [parent, child] });
-  const saved = structuredClone(parent); saved.topology.nodes[0].data.title = '手动保存旧版本'; store.saveDocument(saved); store.publish(saved, 0, '浏览器正式发布');
-  const draft = structuredClone(saved); draft.topology.nodes[0].data.title = '浏览器未发布草稿'; store.saveDraft(draft);
+  const saved = structuredClone(parent); saved.topology.nodes[0].data.title = '手动保存旧版本'; store.saveDocument(saved); store.publish(saved, 0, '备份正式发布');
+  const draft = structuredClone(saved); draft.topology.nodes[0].data.title = '备份未发布草稿'; store.saveDraft(draft);
   return store.snapshot();
 }
 
-test('S14 浏览器迁移完整保留模板、子图、草稿、历史、发布并保留本机原档', async ({ page, context, request }) => {
-  const source = migrationFixture(), raw = JSON.stringify(source);
-  await context.addInitScript(({ key, value }) => localStorage.setItem(key, value), { key: LIBRARY_KEY, value: raw });
-  await login(page); await page.locator('.topbar [data-action="server-storage"]').click(); await page.locator('[data-action="migrate-browser-library"]').click();
+test('S14 不读取旧浏览器存档或提示迁移，服务器库保留文件导入与恢复', async ({ page, context, request }) => {
+  await context.addInitScript(() => {
+    localStorage.setItem('topology-workspace-v1', '{invalid old workspace');
+    localStorage.setItem('station-x6-topology-v1', '{invalid old drawing');
+  });
+  await login(page);
+  await expect(page.locator('#server-pending-notice')).toBeHidden();
+  await page.locator('.topbar [data-action="server-storage"]').click();
+  await expect(page.locator('[data-action="migrate-browser-library"], [data-action="export-browser-library"]')).toHaveCount(0);
+  await expect(page.locator('#modal')).not.toContainText('迁移');
+  await expect(page.locator('[data-action="import-server-library"]')).toBeVisible();
+  await expect(page.locator('#server-storage-error')).toBeEmpty();
+  expect((await state(request)).workspace.documents.map(document => document.id)).toEqual([seed.id]);
+  expect(await page.evaluate(() => localStorage.getItem('topology-workspace-v1'))).toBe('{invalid old workspace');
+});
+
+test('S14 完整库文件导入保留模板、子图、草稿、历史和发布', async ({ page, request }) => {
+  const source = backupFixture(), raw = JSON.stringify(source);
+  await login(page); await page.locator('.topbar [data-action="server-storage"]').click();
+  const choosing = page.waitForEvent('filechooser'); await page.locator('[data-action="import-server-library"]').click();
+  await (await choosing).setFiles({ name: 'workspace-backup.json', mimeType: 'application/json', buffer: Buffer.from(raw) });
   await expect.poll(async () => (await state(request)).workspace.documents.length).toBe(3);
-  const migrated = (await state(request)).workspace;
-  for (const document of source.documents) expect(migrated.documents.find(doc => doc.id === document.id)).toEqual(document);
-  for (const draft of source.editing.drafts) expect(migrated.editing.drafts.find(value => value.document.id === draft.document.id)).toEqual(draft);
-  for (const version of source.editing.history) expect(migrated.editing.history.find(value => value.id === version.id)).toEqual(version);
-  for (const publication of source.publishing.entries) expect(migrated.publishing.entries.find(value => value.id === publication.id)).toEqual(publication);
-  expect(await page.evaluate(key => localStorage.getItem(key), LIBRARY_KEY)).toBe(raw);
+  const imported = (await state(request)).workspace;
+  for (const document of source.documents) expect(imported.documents.find(doc => doc.id === document.id)).toEqual(document);
+  for (const draft of source.editing.drafts) expect(imported.editing.drafts.find(value => value.document.id === draft.document.id)).toEqual(draft);
+  for (const version of source.editing.history) expect(imported.editing.history.find(value => value.id === version.id)).toEqual(version);
+  for (const publication of source.publishing.entries) expect(imported.publishing.entries.find(value => value.id === publication.id)).toEqual(publication);
+  expect(await page.evaluate(key => localStorage.getItem(key), LIBRARY_KEY)).toBeNull();
 });
 
 test('S14 服务器展示跟随当前发布、保留固定版本，断网可恢复，删除不显示旧发布', async ({ page, context, request }) => {

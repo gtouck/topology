@@ -1,9 +1,5 @@
 import { newId, parseDocument, type TopologyDocument } from './document';
 import { documentSignature } from './document-signature';
-import { LIBRARY_KEY } from './library';
-import { parseWorkspace, type Workspace } from './workspace';
-import { STORAGE_KEY } from './topology';
-import { parseMigrationWorkspace } from '../shared/migration';
 
 export const RECOVERY_PREFIX = 'topology-server-recovery-v1:';
 export interface RecoveryCopy { document: TopologyDocument; baseSignature: string; savedAt: string }
@@ -32,21 +28,4 @@ export class ServerRecovery {
     }
     return entries.sort((a, b) => b.savedAt.localeCompare(a.savedAt));
   }
-}
-
-export const browserMigrationRaw = (storage: Storage) => storage.getItem(LIBRARY_KEY) ?? storage.getItem(STORAGE_KEY);
-export function browserMigrationSource(storage: Storage): Workspace | null {
-  const raw = storage.getItem(LIBRARY_KEY);
-  if (raw !== null) return parseMigrationWorkspace(JSON.parse(raw));
-  const legacy = storage.getItem(STORAGE_KEY); if (legacy === null) return null;
-  const input = JSON.parse(legacy), document = parseDocument(input);
-  if (input.version === 1 && input.format === undefined) {
-    // The old single-drawing format has no ID. Repeated reads/imports must map
-    // the exact same source to one document, including on another browser.
-    let a = 2166136261, b = 2246822519;
-    for (let i = 0; i < legacy.length; i++) { a = Math.imul(a ^ legacy.charCodeAt(i), 16777619); b = Math.imul(b ^ legacy.charCodeAt(i), 3266489917); }
-    document.id = `legacy-${legacy.length.toString(36)}-${(a >>> 0).toString(16)}-${(b >>> 0).toString(16)}`;
-    if (typeof input.savedAt !== 'string' || !Number.isFinite(Date.parse(input.savedAt))) document.createdAt = document.updatedAt = '1970-01-01T00:00:00.000Z';
-  }
-  return parseWorkspace({ version: 1, activeId: document.id, documents: [document] });
 }

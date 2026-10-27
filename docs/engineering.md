@@ -9,7 +9,7 @@
 | 编辑会话 | `editor-history.ts`、`document-signature.ts` | 每张图最多 50 步撤销，克隆进出，不持有 Graph、DOM、计时器或运行值 |
 | 共享工作空间 | `workspace.ts`、`publication.ts`、`publication-storage.ts` | 纯草稿/历史/发布规则，服务端复用；保留本地适配及宿主发布存储接口 |
 | 服务器持久化 | `server/`、`shared/api.ts`、`workspace-client.ts` | SQLite 事务、认证、版本冲突、幂等重试及服务器确认 |
-| 本机恢复 | `server-recovery.ts` | 保留未确认快照和旧浏览器迁移来源，不代表服务器保存成功 |
+| 本机恢复 | `server-recovery.ts` | 仅保留未确认快照，不读取旧浏览器存档，不代表服务器保存成功 |
 | 运行数据 | `editor-telemetry.ts`、`data-freshness.ts`、`link-state.ts` | 参数、接收时间、连接与链路状态，独立于文档和撤销 |
 | 渲染与导航 | `rendering.ts`、`diagram-rendering.ts`、`graph-navigation.ts` | 设备/图面/线缆外观与视口，不自动整理人工布局 |
 | 界面调度 | `main.ts` | 图形事件、表单、拖动合并、保存计时和调用上述模块 |
@@ -69,3 +69,7 @@ S12 本轮部署恢复验收记录见 仓库中的 `docs/deployment/s12-proof.js
 SQLite 第一版使用单共享库快照及独立库版本，事务内复用 WorkspaceStore 命令；浏览器切图不是库写入。请求 ID 收据支持响应丢失后的幂等重试；并发修改按全库拒绝，不提供逐字段自动合并。数据库模式版本独立于文档 v3，未来结构升级必须提供数据库迁移与回滚兼容说明。
 
 账号为单管理员，初始随机凭据保存在权限受限的 data/admin-credentials.json，部署后下载到本机 .local/preview-credentials.json。开发和预览 HTTP 登录不代替正式 HTTPS 部署。SQLite备份、凭据、会话和本机恢复数据均不纳入 Git 或静态资源目录。
+
+## 浏览器旧存档功能移除（2026-10-26）
+
+当前开发版本不提供旧浏览器拓扑库检测、迁移提示、原档备份入口或旧单图存储键自动读取。完整库文件导入通过 `importWorkspace` 命令执行，校验逻辑位于 `shared/workspace-import.ts`，同 ID 冲突为 `IMPORT_CONFLICT`；原迁移命令不保留别名。未同步内容继续由 `server-recovery.ts` 独立保留。数据库结构不变，已有服务器存档不会因本次功能移除而重置。

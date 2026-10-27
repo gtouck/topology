@@ -83,5 +83,5 @@ export class RemoteWorkspace {
   discardDraft(documentId: string) { return this.write({ type: 'discardDraft', documentId }); }
   publish(document: TopologyDocument, expectedPublicationRevision: number, note?: string) { return this.write({ type: 'publish', document, expectedPublicationRevision, note }); }
   rollbackPublication(documentId: string, publicationId: string, expectedPublicationRevision: number, note?: string) { return this.write({ type: 'rollbackPublication', documentId, publicationId, expectedPublicationRevision, note }); }
-  migrateWorkspace(workspace: Workspace) { return this.write({ type: 'migrateWorkspace', workspace }); }
+  importWorkspace(workspace: Workspace) { return this.write({ type: 'importWorkspace', workspace }); }
 }

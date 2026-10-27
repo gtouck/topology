@@ -7,7 +7,7 @@ import { LIBRARY_KEY } from '../../src/library';
 import { WorkspaceStore, parseWorkspace, type Workspace } from '../../src/workspace';
 import { ServerStore, parseCommandRequest, ApiFailure } from '../../server/store';
 import type { WorkspaceCommand } from '../../shared/api';
-import { parseMigrationWorkspace } from '../../shared/migration';
+import { parseWorkspaceImport } from '../../shared/workspace-import';
 
 const resources: { store: ServerStore; directory: string }[] = [];
 function database() {
@@ -73,42 +73,42 @@ describe('SQLite workspace commands', () => {
     expect(store.read()).toEqual(before);
   });
 
-  test('full local migration preserves IDs, drafts, histories, publications and child links and is idempotent', () => {
+  test('complete backup import preserves IDs, drafts, histories, publications and child links and is idempotent', () => {
     const store = database(), incoming = local();
-    const first = execute(store, { type: 'migrateWorkspace', workspace: incoming });
+    const first = execute(store, { type: 'importWorkspace', workspace: incoming });
     expect(first.workspace).toEqual(incoming);
     expect(first.workspace.documents[0].topology.edges[0].vertices).toEqual([{ x: 42, y: 123 }, { x: 555, y: 456 }]);
-    const repeated = execute(store, { type: 'migrateWorkspace', workspace: incoming });
+    const repeated = execute(store, { type: 'importWorkspace', workspace: incoming });
     expect(repeated).toEqual(first);
     expect(first.workspace.publishing.entries.some(entry => entry.rollbackOf)).toBe(true);
   });
 
-  test('migration merges disjoint libraries, rejects conflicting IDs atomically and never silently trims history', () => {
+  test('backup import merges disjoint libraries, rejects conflicting IDs atomically and never silently trims history', () => {
     const store = database(), incoming = local();
-    execute(store, { type: 'migrateWorkspace', workspace: incoming });
-    const other = local(), merged = execute(store, { type: 'migrateWorkspace', workspace: other });
+    execute(store, { type: 'importWorkspace', workspace: incoming });
+    const other = local(), merged = execute(store, { type: 'importWorkspace', workspace: other });
     expect(merged.workspace.documents).toHaveLength(4);
     expect(merged.workspace.editing.history).toHaveLength(incoming.editing.history.length + other.editing.history.length);
     const conflict = structuredClone(incoming); conflict.documents[0].name = '冲突'; conflict.documents.push(createDocument('不应部分导入'));
-    expect(() => execute(store, { type: 'migrateWorkspace', workspace: conflict })).toThrow('同 ID');
+    expect(() => execute(store, { type: 'importWorkspace', workspace: conflict })).toThrow('同 ID');
     expect(store.read()).toEqual(merged);
     const orphan = structuredClone(other); orphan.editing.history.push({ ...orphan.editing.history[0], id: 'orphan-history', document: createDocument('不属于库') });
-    expect(() => execute(store, { type: 'migrateWorkspace', workspace: orphan })).toThrow('丢失');
+    expect(() => execute(store, { type: 'importWorkspace', workspace: orphan })).toThrow('丢失');
     expect(store.read()).toEqual(merged);
   });
 
-  test('migration exceeding combined retention limits is rejected instead of dropping either library histories', () => {
+  test('backup import exceeding combined retention limits is rejected instead of dropping either library histories', () => {
     function historyLibrary(): Workspace {
       const documents = Array.from({ length: 5 }, (_, index) => createDocument(`图 ${index}`));
       return parseWorkspace({ version: 1, activeId: documents[0].id, documents, editing: { version: 2, revision: 0, drafts: [], history: documents.flatMap(document => Array.from({ length: 8 }, (_, index) => ({ id: crypto.randomUUID(), document: { ...document, name: `${document.name}历史${index}` }, reason: 'manual', savedAt: document.createdAt }))) } });
     }
-    const store = database(), first = execute(store, { type: 'migrateWorkspace', workspace: historyLibrary() });
+    const store = database(), first = execute(store, { type: 'importWorkspace', workspace: historyLibrary() });
     expect(first.workspace.editing.history).toHaveLength(40);
-    expect(() => execute(store, { type: 'migrateWorkspace', workspace: historyLibrary() })).toThrow('丢失');
+    expect(() => execute(store, { type: 'importWorkspace', workspace: historyLibrary() })).toThrow('丢失');
     expect(store.read()).toEqual(first);
   });
 
-  test('shared migration parser rejects pre-trimming of source histories and publications without modifying the source', () => {
+  test('shared backup import parser rejects pre-trimming of source histories and publications without modifying the source', () => {
     const incoming = local(), history = incoming.editing.history[0], publication = incoming.publishing.entries[0];
     const historyOverflow = structuredClone(incoming);
     historyOverflow.editing.history = Array.from({ length: 11 }, (_, index) => ({ ...history, id: `history-${index}` }));
@@ -116,14 +116,14 @@ describe('SQLite workspace commands', () => {
     publicationOverflow.publishing.entries = Array.from({ length: 11 }, (_, index) => ({ ...publication, id: `publication-${index}`, revision: index + 1 }));
     for (const source of [historyOverflow, publicationOverflow]) {
       const original = JSON.stringify(source);
-      expect(() => parseMigrationWorkspace(source)).toThrow('丢失');
+      expect(() => parseWorkspaceImport(source)).toThrow('丢失');
       expect(JSON.stringify(source)).toBe(original);
     }
-    expect(parseMigrationWorkspace(incoming)).toEqual(incoming);
+    expect(parseWorkspaceImport(incoming)).toEqual(incoming);
   });
 
   test('restoring history first preserves the current drawing, rollback creates a publication without replacing draft', () => {
-    const store = database(), incoming = local(); execute(store, { type: 'migrateWorkspace', workspace: incoming });
+    const store = database(), incoming = local(); execute(store, { type: 'importWorkspace', workspace: incoming });
     const documentId = incoming.activeId, current = incoming.editing.drafts[0].document;
     const restored = execute(store, { type: 'restoreDraft', documentId, versionId: 'saved', current });
     expect(restored.workspace.editing.history.some(entry => entry.reason === 'before-restore' && entry.document.description === current.description)).toBe(true);

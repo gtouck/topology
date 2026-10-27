@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { RemoteWorkspace } from '../src/workspace-client';
-import { ServerRecovery, browserMigrationSource } from '../src/server-recovery';
+import { ServerRecovery } from '../src/server-recovery';
 import { WorkspaceStore, WorkspaceConflict } from '../src/workspace';
 import { emptyLibrary, LIBRARY_KEY } from '../src/library';
 import type { WorkspaceCommandRequest, WorkspaceResponse } from '../shared/api';
-import { STORAGE_KEY } from '../src/topology';
+import { parseWorkspaceImport } from '../shared/workspace-import';
 
 class MemoryStorage implements Storage {
   values = new Map<string, string>();
@@ -86,31 +86,28 @@ describe('server workspace confirmation and recovery', () => {
     a.acknowledge(newer); expect(a.entries()).toHaveLength(1);
     b.acknowledge(document); expect(a.entries()).toHaveLength(0);
   });
-  test('migration reads full workspace without overwriting source history or publications', () => {
+  test('backup import parser preserves source history and publications', () => {
     const { storage, store, document } = fixture();
     store.saveDocument({ ...document, name: 'saved' }); store.saveDraft({ ...document, name: 'draft' }); store.publish(document, 0, 'immutable');
-    const raw = storage.getItem(LIBRARY_KEY), source = browserMigrationSource(storage)!;
+    const raw = storage.getItem(LIBRARY_KEY), source = parseWorkspaceImport(JSON.parse(raw!));
     expect(source.editing.drafts).toHaveLength(1); expect(source.editing.history.length).toBeGreaterThan(0);
     expect(source.publishing.entries[0].note).toBe('immutable'); expect(storage.getItem(LIBRARY_KEY)).toBe(raw);
   });
-  test('legacy single drawing maps to a stable ID and dates without writing its source', () => {
-    const { storage, document } = fixture(); storage.removeItem(LIBRARY_KEY);
-    const raw = JSON.stringify({ version: 1, name: 'old drawing', topology: document.topology });
-    storage.setItem(STORAGE_KEY, raw);
-    const first = browserMigrationSource(storage)!;
-    expect(browserMigrationSource(storage)).toEqual(first);
-    const anotherBrowser = new MemoryStorage(); anotherBrowser.setItem(STORAGE_KEY, raw);
-    expect(browserMigrationSource(anotherBrowser)).toEqual(first);
-    expect(storage.getItem(STORAGE_KEY)).toBe(raw); expect(storage.getItem(LIBRARY_KEY)).toBeNull();
-    storage.setItem(STORAGE_KEY, JSON.stringify({ version: 1, name: 'old drawing', savedAt: 123, topology: document.topology }));
-    expect(browserMigrationSource(storage)!.documents[0].updatedAt).toBe('1970-01-01T00:00:00.000Z');
+  test('recovery copies ignore unrelated browser archives and keep unsynchronized edits', () => {
+    const { storage, document } = fixture();
+    storage.setItem(LIBRARY_KEY, '{invalid old workspace'); storage.setItem('station-x6-topology-v1', '{invalid old drawing');
+    const recovery = new ServerRecovery(storage);
+    expect(recovery.entries()).toEqual([]);
+    recovery.save({ ...document, name: 'unsynchronized edit' }, 'base');
+    expect(recovery.entries()[0].document.name).toBe('unsynchronized edit');
+    expect(storage.getItem(LIBRARY_KEY)).toBe('{invalid old workspace');
   });
-  test('migration does not pre-trim an oversized browser history before sending it', () => {
+  test('backup import rejects oversized history before sending it', () => {
     const { storage, store, document } = fixture(); store.saveDocument({ ...document, name: 'history' });
     const original = store.snapshot(), entry = original.editing.history[0];
     original.editing.history = Array.from({ length: 11 }, (_, i) => ({ ...entry, id: `history-${i}` }));
     const raw = JSON.stringify(original); storage.setItem(LIBRARY_KEY, raw);
-    expect(() => browserMigrationSource(storage)).toThrow('迁移将丢失');
+    expect(() => parseWorkspaceImport(JSON.parse(raw))).toThrow('导入将丢失');
     expect(storage.getItem(LIBRARY_KEY)).toBe(raw);
   });
 });

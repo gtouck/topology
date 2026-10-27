@@ -10,8 +10,8 @@ import { categories, newId, parseDocument, sampleDocument, templatesFromDefiniti
 import { LIBRARY_KEY, duplicateDocument, removeDocument, emptyLibrary, type TopologyLibrary } from './library';
 import { RemoteWorkspace, type WorkspaceAccess } from './workspace-client';
 import { isServerMode, ensureServerSession, serverFetch, retryServerConnection, logoutServer } from './server-session';
-import { ServerRecovery, browserMigrationSource, browserMigrationRaw } from './server-recovery';
-import { parseMigrationWorkspace } from '../shared/migration';
+import { ServerRecovery } from './server-recovery';
+import { parseWorkspaceImport } from '../shared/workspace-import';
 import { WorkspaceStore, WorkspaceConflict, documentSignature, type Workspace, type LocalVersion } from './workspace';
 import { downloadBlob, exportFilename, graphSvg, svgToPng, standaloneHtml } from './exports';
 import type { ExportState } from './export-svg';
@@ -128,7 +128,7 @@ $('#app').innerHTML = `
       <section class="topology-panel" aria-label="拓扑画布">
         <div class="panel-heading"><div class="panel-title"><span class="panel-symbol">${icon('Network', 18)}</span><h2>拓扑画布</h2><span class="tag">通用拓扑</span></div><div class="workspace-summary" aria-label="拓扑计数"><span><strong id="stat-total">0</strong> 节点</span><span><strong id="stat-links">0</strong> 链路</span></div><div class="panel-heading-actions"><span id="save-status" class="save-status">${icon('Check', 13)}示例布局</span>${button('publication', '发布与版本', 'Upload', '发布')}<span id="publication-label" class="publication-label"></span>${button('import', '导入 JSON', 'Upload')}${button('export-options', '导出拓扑', 'Download')}${button('viewer', '在独立展示页打开', 'ExternalLink')}${button('draft-history', '草稿与历史', 'Clock3')}${button('fullscreen', '全屏查看', 'Maximize')}</div></div>
         <div id="draft-notice" class="draft-notice" hidden><span id="draft-message" role="status"></span><button class="button" data-action="retry-draft">重试保存草稿</button><button class="button" data-action="export-current-backup">导出当前图</button><button class="button" data-action="storage-reload">重新读取</button></div>
-        <div id="server-pending-notice" class="server-pending-notice" hidden><span id="server-pending-message"></span><button class="button" data-action="server-storage">查看与迁移</button></div><div class="canvas-toolbar"><div class="link-filters" aria-label="链路筛选">${(Object.entries(linkTypes) as [LinkKind, typeof linkTypes[LinkKind]][]).map(([kind, def]) => `<button data-filter="${kind}" class="filter-chip active" aria-pressed="true"><span style="--link-color:${def.color}"></span>${def.label}</button>`).join('')}</div><div class="toolbar-right"><span class="live-label" id="live-label"><i></i>模拟实时</span><span class="toolbar-separator"></span><select id="data-mode" aria-label="数据模式"><option value="simulation">模拟数据</option><option value="external">宿主数据</option></select>${button('data-settings', '数据接入设置', 'Settings')}${button('pause', '暂停模拟数据', 'Pause')}${button('outage', '模拟节点离线', 'Unplug', '离线演示', 'subtle')}</div></div>
+        <div id="server-pending-notice" class="server-pending-notice" hidden><span id="server-pending-message"></span><button class="button" data-action="server-storage">查看恢复副本</button></div><div class="canvas-toolbar"><div class="link-filters" aria-label="链路筛选">${(Object.entries(linkTypes) as [LinkKind, typeof linkTypes[LinkKind]][]).map(([kind, def]) => `<button data-filter="${kind}" class="filter-chip active" aria-pressed="true"><span style="--link-color:${def.color}"></span>${def.label}</button>`).join('')}</div><div class="toolbar-right"><span class="live-label" id="live-label"><i></i>模拟实时</span><span class="toolbar-separator"></span><select id="data-mode" aria-label="数据模式"><option value="simulation">模拟数据</option><option value="external">宿主数据</option></select>${button('data-settings', '数据接入设置', 'Settings')}${button('pause', '暂停模拟数据', 'Pause')}${button('outage', '模拟节点离线', 'Unplug', '离线演示', 'subtle')}</div></div>
         <div class="selection-toolbar" id="edit-tools" hidden><div class="canvas-tool-switch" role="group" aria-label="画布工具">${button('tool-select', '拖动空白处框选节点', 'MousePointer2', '框选')}${button('tool-pan', '拖动空白处平移画布，Shift 拖动可框选', 'Hand', '平移')}</div><span class="toolbar-separator"></span>${button('undo', '撤销 Ctrl / ⌘ Z', 'Undo2')}${button('redo', '重做 Ctrl / ⌘ Shift Z', 'Redo2')}<span class="toolbar-separator"></span>${button('select-all', '全选图形对象 Ctrl / ⌘ A', 'Scan')}${button('copy', '复制节点及内部连线 Ctrl / ⌘ C', 'Copy')}${button('paste', '粘贴 Ctrl / ⌘ V', 'ClipboardPaste')}${button('duplicate', '复制副本 Ctrl / ⌘ D', 'CopyPlus')}${button('delete', '删除选中对象 Delete', 'Trash2')}<span class="toolbar-separator"></span><select id="align-command" aria-label="节点对齐" title="以首个锁定节点为参照；无锁定节点时以选区边界为参照"><option value="">对齐</option>${Object.entries(alignmentLabels).map(([key, label]) => `<option value="${key}">${label}</option>`).join('')}</select><select id="distribute-command" aria-label="节点分布" title="分布只处理未锁定节点"><option value="">分布</option><option value="horizontal">水平等距</option><option value="vertical">垂直等距</option><option value="gap">指定间距…</option></select>${button('lock-selected', '锁定位置，移动和批量删除会跳过', 'LockKeyhole')}${button('unlock-selected', '解锁所选节点', 'LockKeyholeOpen')}<span class="toolbar-separator"></span>${button('add-group', '将所选节点组成区域；无选择时创建空区域', 'Layers', '分组')}${button('add-note', '添加文字注释', 'PencilRuler', '注释')}${button('add-legend', '添加链路和状态图例', 'Info', '图例')}<select id="layer-command" aria-label="图形层次"><option value="">层次</option><option value="front">置顶</option><option value="back">置底</option></select><span id="selection-count">未选择</span><span class="selection-hint">Ctrl / ⌘ / Shift 点选 · 方向键移动</span></div>
         <div class="canvas-layout"><div class="canvas-wrap" id="canvas-wrap"><div class="canvas-watermark">当前拓扑</div><div id="graph" tabindex="0" aria-label="拓扑画布"></div><div class="canvas-empty" id="canvas-empty" hidden>${icon('Network', 32)}<strong>添加第一个节点</strong><p>展开节点库，点击模板或将其拖入画布。</p></div><div class="canvas-mode" id="canvas-mode">${icon('LockKeyhole', 13)}查看模式 · 布局已锁定</div><div class="canvas-controls">${button('zoom-out', '缩小', 'Minus')}<span id="zoom-label">100%</span>${button('zoom-in', '放大', 'Plus')}<span class="toolbar-separator"></span>${button('fit', '适应画布', 'Scan')}</div></div><div id="inspector-resizer" class="panel-resizer inspector-resizer" role="separator" tabindex="0" aria-label="调整属性栏宽度" aria-orientation="vertical" aria-controls="inspector" aria-valuemin="240" aria-valuemax="420" aria-valuenow="280" title="拖动调宽；方向键微调；双击恢复默认"></div><aside id="inspector" class="inspector" aria-label="节点与链路属性"></aside><button class="inspector-toggle icon-button" data-action="toggle-inspector" aria-controls="inspector" aria-expanded="true" title="收起属性栏" aria-label="收起属性栏">${icon('PanelRight')}</button></div>
         <div class="panel-footer"><span><span class="tiny-dot" id="footer-dot"></span><span id="footer-mode">查看模式</span><span class="footer-divider">/</span><span id="footer-hint">点击节点查看参数 · 滚轮缩放 · 拖动画布平移</span></span><span id="update-time">数据更新 --:--:--</span></div>
@@ -1008,46 +1008,37 @@ async function handleDocumentAction(action: string, id: string) {
   }
 }
 
-function migrationFingerprint(value: Workspace) {
-  const text = JSON.stringify(value); let hash = 2166136261;
-  for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 16777619);
-  return `${text.length}:${hash >>> 0}`;
-}
 function updateServerNotice() {
   if (!serverMode) return;
   try {
-    const source = browserMigrationSource(localStorage), count = recoveryCopies?.entries().length || 0;
-    const migrate = source && localStorage.getItem('topology-server-migrated') !== migrationFingerprint(source);
-    $('#server-pending-notice').hidden = !count && !migrate;
-    $('#server-pending-message').textContent = [migrate ? `本浏览器有 ${source.documents.length} 张旧拓扑，可迁移到服务器` : '', count ? `有 ${count} 份未确认同步的本机恢复副本` : ''].filter(Boolean).join('；');
-  } catch { $('#server-pending-notice').hidden = false; $('#server-pending-message').textContent = '浏览器存档无法读取，请在服务器库中检查或导出备份'; }
+    const count = recoveryCopies?.entries().length || 0;
+    $('#server-pending-notice').hidden = !count;
+    $('#server-pending-message').textContent = count ? `有 ${count} 份未确认同步的本机恢复副本` : '';
+  } catch { $('#server-pending-notice').hidden = false; $('#server-pending-message').textContent = '本机恢复副本无法读取，请先导出当前图备份'; }
 }
 function showServerStorage() {
   if (!(workspace instanceof RemoteWorkspace)) return;
-  let source: Workspace | null = null, error = '', hasRaw = false;
-  try { hasRaw = browserMigrationRaw(localStorage) !== null; source = browserMigrationSource(localStorage); } catch (failure) { error = failure instanceof Error ? failure.message : '浏览器旧存档无法读取'; }
   const entries = recoveryCopies?.entries() || [];
-  showModal('服务器拓扑库', `<p class="modal-description">文档、模板、草稿、历史与发布版本保存在服务器。登录同一服务器可在其他浏览器继续使用。运行参数仍由宿主系统接入。</p><div class="server-storage-summary"><strong>${library.documents.length} 张拓扑</strong><span>库版本 ${workspace.serverRevision}</span></div><div class="server-storage-actions"><button class="button" data-action="export-server-library">导出完整拓扑库</button><button class="button" data-action="import-server-library">导入完整库备份</button><button class="button" data-action="storage-reload">重新读取服务器</button><button class="button" data-action="server-logout">退出登录</button></div><input id="server-library-file" type="file" accept=".json,application/json" hidden /><h3>迁移浏览器存档</h3><p class="modal-description">${source ? `找到 ${source.documents.length} 张拓扑、${source.editing.drafts.length} 份草稿、${source.editing.history.length} 条历史和 ${source.publishing.entries.length} 个发布版本。` : '此浏览器没有旧版拓扑库。可在原浏览器打开本页面迁移，或导入完整库备份。'}迁移保留文档 ID 与子图引用，成功后原本机存档继续保留；同 ID 内容不一致时整批拒绝。</p><div class="server-storage-actions"><button class="button primary" data-action="migrate-browser-library" ${source ? '' : 'disabled'}>迁移本浏览器拓扑库</button><button class="button" data-action="export-browser-library" ${hasRaw ? '' : 'disabled'}>备份浏览器原存档</button></div><p id="server-storage-error" role="alert">${esc(error)}</p><h3>本机恢复副本</h3><p class="modal-description">网络中断或关闭页面前保留的未确认修改。恢复为新图可保留服务器当前内容；确认无用后可移除副本。</p>${entries.map(entry => `<article class="server-recovery-entry" data-recovery-key="${esc(entry.key)}"><strong>${esc(entry.document.name)}</strong><p>${esc(new Date(entry.savedAt).toLocaleString('zh-CN'))} · ${entry.document.topology.nodes.length} 个节点</p><div class="server-storage-actions"><button class="button" data-recovery-action="copy">恢复为新图</button><button class="button" data-recovery-action="export">导出副本</button><button class="button" data-recovery-action="delete">移除副本</button></div></article>`).join('') || '<p class="muted">没有待处理的本机恢复副本。</p>'}`);
+  showModal('服务器拓扑库', `<p class="modal-description">文档、模板、草稿、历史与发布版本保存在服务器。登录同一服务器可在其他浏览器继续使用。运行参数仍由宿主系统接入。</p><div class="server-storage-summary"><strong>${library.documents.length} 张拓扑</strong><span>库版本 ${workspace.serverRevision}</span></div><div class="server-storage-actions"><button class="button" data-action="export-server-library">导出完整拓扑库</button><button class="button" data-action="import-server-library">导入完整库备份</button><button class="button" data-action="storage-reload">重新读取服务器</button><button class="button" data-action="server-logout">退出登录</button></div><input id="server-library-file" type="file" accept=".json,application/json" hidden /><p class="modal-description">导入完整库备份会保留文档、草稿、历史和发布记录；同 ID 内容不一致时拒绝导入。</p><p id="server-storage-error" role="alert"></p><h3>本机恢复副本</h3><p class="modal-description">网络中断或关闭页面前保留的未确认修改。恢复为新图可保留服务器当前内容；确认无用后可移除副本。</p>${entries.map(entry => `<article class="server-recovery-entry" data-recovery-key="${esc(entry.key)}"><strong>${esc(entry.document.name)}</strong><p>${esc(new Date(entry.savedAt).toLocaleString('zh-CN'))} · ${entry.document.topology.nodes.length} 个节点</p><div class="server-storage-actions"><button class="button" data-recovery-action="copy">恢复为新图</button><button class="button" data-recovery-action="export">导出副本</button><button class="button" data-recovery-action="delete">移除副本</button></div></article>`).join('') || '<p class="muted">没有待处理的本机恢复副本。</p>'}`);
   $<HTMLInputElement>('#server-library-file').onchange = async event => {
     const input = event.target as HTMLInputElement, file = input.files?.[0]; if (!file) return;
     await runStorageAction(async () => {
       try {
         if (file.size > 32 * 1024 * 1024) throw new Error('完整库备份不能超过 32 MB');
-        const source = parseMigrationWorkspace(JSON.parse(await file.text())); await migrateWorkspace(source);
+        const source = parseWorkspaceImport(JSON.parse(await file.text())); await importWorkspace(source);
       } catch (error) { $('#server-storage-error').textContent = error instanceof Error ? error.message : '导入失败'; }
       finally { input.value = ''; }
     });
   };
 }
-async function migrateWorkspace(source: Workspace, browserSource = false) {
+async function importWorkspace(source: Workspace) {
   if (!(workspace instanceof RemoteWorkspace)) return;
   if (!(await saveDraftNow())) { $('#server-storage-error').textContent = storageError; return; }
   try {
-    adoptWorkspace(await workspace.migrateWorkspace(source));
-    if (browserSource) localStorage.setItem('topology-server-migrated', migrationFingerprint(source));
+    adoptWorkspace(await workspace.importWorkspace(source));
     if (!library.documents.some(document => document.id === activeDocument.id)) openDocument(library.activeId);
-    updateDocumentChrome(); updateServerNotice(); showServerStorage(); toast('完整拓扑库已迁入服务器，原存档保留');
-  } catch (error) { storageFailure(error); $('#server-storage-error').textContent = error instanceof Error ? error.message : '迁移失败'; }
+    updateDocumentChrome(); updateServerNotice(); showServerStorage(); toast('完整拓扑库已导入服务器');
+  } catch (error) { storageFailure(error); $('#server-storage-error').textContent = error instanceof Error ? error.message : '导入失败'; }
 }
 async function handleRecoveryAction(button: HTMLElement) {
   const key = button.closest<HTMLElement>('[data-recovery-key]')?.dataset.recoveryKey;
@@ -1072,7 +1063,7 @@ async function runStorageAction(action: () => unknown) {
   catch (error) { toast(error instanceof Error ? error.message : '操作失败，请重试', true); }
   finally { storageActionBusy = false; $('#app').inert = false; }
 }
-const storageActions = new Set(['open-child-topology', 'navigation-back', 'publication', 'publish-current', 'draft-history', 'library', 'create-document', 'apply-document-info', 'migrate-browser-library', 'server-logout']);
+const storageActions = new Set(['open-child-topology', 'navigation-back', 'publication', 'publish-current', 'draft-history', 'library', 'create-document', 'apply-document-info', 'server-logout']);
 function runAction(action: string) {
   if (!actions[action] || storageActionBusy) return;
   if (storageActions.has(action)) void runStorageAction(actions[action]);
@@ -1371,10 +1362,8 @@ async function exportTopology(format: 'json' | 'svg' | 'png' | 'html') {
 
 const actions: Record<string, () => unknown> = {
   'server-storage': showServerStorage,
-  'migrate-browser-library': async () => { const source = browserMigrationSource(localStorage); if (source) await migrateWorkspace(source, true); },
   'export-server-library': () => { if (workspace) downloadBlob(new Blob([JSON.stringify(workspace.snapshot(), null, 2)], { type: 'application/json' }), 'topology-workspace.json'); },
   'import-server-library': () => $<HTMLInputElement>('#server-library-file').click(),
-  'export-browser-library': () => { const raw = browserMigrationRaw(localStorage); if (raw !== null) downloadBlob(new Blob([raw], { type: 'application/json' }), 'browser-workspace-backup.json'); },
   'server-logout': async () => { if (!(await saveDraftNow())) return; await logoutServer(); reloadRequested = true; location.reload(); },
   'open-child-topology': openChildTopology,
   'navigation-back': navigateBack,

@@ -27,7 +27,7 @@ bun run deploy
 
 本机需要 Bun、git、tar、SSH/SCP，并能登录服务器；远端需要 systemd、flock、unzip 和 ubuntu 免交互 sudo（Python 3 用于旧版回滚）；脚本安装独立的固定版本 Bun，安全组和防火墙放行 TCP 10001。后续继续执行同一命令；服务由 systemd 托管，异常自动重启，并配置开机恢复。`bun run deploy:status` 查看状态，`bun run deploy:rollback` 切换上一版；日志用 `journalctl -u station-device-draw -n 100 --no-pager` 查看，详见 [部署维护](docs/engineering.md)。
 
-数据库固定保存在远端 `data/`，独立于版本目录，重启、部署和代码回滚均保留。预览登录信息下载到 `.local/preview-credentials.json`（不提交 Git）。旧浏览器拓扑可通过顶部“服务器库”完整迁移。`bun run deploy:backup` 创建远端一致性备份。
+数据库固定保存在远端 `data/`，独立于版本目录，重启、部署和代码回滚均保留。预览登录信息下载到 `.local/preview-credentials.json`（不提交 Git）。顶部“服务器库”提供完整库文件导入导出及本机未同步副本恢复。`bun run deploy:backup` 创建远端一致性备份。
 
 ## 本次交付
 
@@ -177,15 +177,15 @@ bun run deploy
 
 文件升级为 Topology v3；旧 v1/v2 可导入，新文件需使用支持 v3 的制作工具和 `0.7.0` 展示组件。旧版 Schema 保留在 `schema/topology-v2.schema.json`，不可仅降低版本号来使用新文件。
 
-## 文件格式与旧数据
+## 文件格式与备份
 
 格式说明与接入示例见 [独立组件接入](docs/integration.md)，结构定义见 [JSON Schema](schema/topology-v3.schema.json)。
 
 - 新格式为 `format: "topology-document"`、`version: 3`，每份文件自带所需模板及图面元素。
 - 导入始终新增文档；若文档 ID 已存在，则生成新的文档 ID，保留原图。节点 ID 作用域在各文档内。
-- 原单图 v1 和通用 v2 文件可继续导入并迁移到 v3。纯浏览器模式下旧键 `station-x6-topology-v1` 首次自动迁移到新库，旧键原样保留。
-- 纯浏览器库键为 `topology-workspace-v1`；服务器模式使用 SQLite，旧键只作为迁移来源保留。存储失败不会切换图或覆盖上次成功保存的库，当前画布仍可导出备份。
-- 服务器模式登录后共用服务器存档；纯浏览器模式的不同浏览器/访问地址/端口仍各自独立。完整库迁移保留草稿、历史、发布和子图引用，原存档不删除。
+- 通用文件可通过文件选择导入；浏览器旧存档的自动检测、迁移入口及旧存储键读取已移除。
+- 纯浏览器库键为 `topology-workspace-v1`；服务器模式使用 SQLite。存储失败不会切换图或覆盖上次成功保存的库，当前画布仍可导出备份。
+- 服务器模式登录后共用服务器存档；纯浏览器模式的不同浏览器/访问地址/端口仍各自独立。通过“服务器库”的完整库文件导入导出保留草稿、历史、发布和子图引用。
 - 当前约束：每个库最多 100 张图，每份文档最多 64 个模板、300 个节点、1000 条线及 100 个图面元素；单次导入文件最大 3 MB。服务器不受 localStorage 配额限制；纯浏览器存储及未同步本机副本仍受配额约束。历史/发布容量规则继续保留。
 - 校验覆盖文件版本、模板、参数、端口类型、绑定和坐标。不执行导入文件中的 HTML、脚本或表达式。
 

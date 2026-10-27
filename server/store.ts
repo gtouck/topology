@@ -4,7 +4,7 @@ import { emptyLibrary, LIBRARY_KEY, type LibraryStorage } from '../src/library';
 import { WorkspaceConflict, WorkspaceStore, parseWorkspace, type Workspace } from '../src/workspace';
 import { PublicationConflict } from '../src/publication';
 import type { ApiErrorCode, WorkspaceCommandRequest, WorkspaceResponse } from '../shared/api';
-import { parseMigrationWorkspace } from '../shared/migration';
+import { parseWorkspaceImport } from '../shared/workspace-import';
 
 export class ApiFailure extends Error {
   constructor(public status: number, public code: ApiErrorCode, message: string, public details: { currentRevision?: number; conflictingIds?: string[] } = {}) { super(message); }
@@ -27,7 +27,7 @@ export function parseCommandRequest(input: unknown): WorkspaceCommandRequest {
     restoreDraft: ['documentId', 'versionId', 'current'], discardDraft: ['documentId'],
     publish: ['document', 'expectedPublicationRevision', 'note'],
     rollbackPublication: ['documentId', 'publicationId', 'expectedPublicationRevision', 'note'],
-    migrateWorkspace: ['workspace'],
+    importWorkspace: ['workspace'],
   };
   if (typeof type !== 'string' || !Object.hasOwn(fields, type)) throw new ApiFailure(422, 'INVALID_INPUT', '不支持的工作区命令');
   const keys = ['type', ...fields[type]], command = strictObject(request.command, keys, keys.filter(key => key !== 'note'));
@@ -46,12 +46,12 @@ function documentBundle(workspace: Workspace, id: string) {
   const sort = <T extends { id: string }>(entries: T[]) => entries.sort((a, b) => a.id.localeCompare(b.id));
   return stable({ document: workspace.documents.find(document => document.id === id), draft: workspace.editing.drafts.find(draft => draft.document.id === id) ?? null, history: sort(workspace.editing.history.filter(entry => entry.document.id === id)), publications: sort(workspace.publishing.entries.filter(entry => entry.documentId === id)) });
 }
-function migrate(current: Workspace, input: Workspace, pristine: boolean) {
-  const incoming = parseMigrationWorkspace(input);
+function importBackup(current: Workspace, input: Workspace, pristine: boolean) {
+  const incoming = parseWorkspaceImport(input);
   if (pristine) return incoming;
   const existing = new Set(current.documents.map(document => document.id));
   const conflicts = incoming.documents.filter(document => existing.has(document.id) && documentBundle(current, document.id) !== documentBundle(incoming, document.id)).map(document => document.id);
-  if (conflicts.length) throw new ApiFailure(409, 'MIGRATION_CONFLICT', '本机拓扑与服务器存在同 ID 的不同内容，迁移未执行。请保留本机备份并处理冲突', { conflictingIds: conflicts });
+  if (conflicts.length) throw new ApiFailure(409, 'IMPORT_CONFLICT', '备份与服务器存在同 ID 的不同内容，导入未执行。请处理冲突后重试', { conflictingIds: conflicts });
   const added = new Set(incoming.documents.filter(document => !existing.has(document.id)).map(document => document.id));
   if (!added.size) return current;
   const combined: Workspace = {
@@ -59,7 +59,7 @@ function migrate(current: Workspace, input: Workspace, pristine: boolean) {
     editing: { ...current.editing, drafts: [...current.editing.drafts, ...incoming.editing.drafts.filter(entry => added.has(entry.document.id))], history: [...current.editing.history, ...incoming.editing.history.filter(entry => added.has(entry.document.id))].sort((a, b) => b.savedAt.localeCompare(a.savedAt)) },
     publishing: { version: 1, entries: [...current.publishing.entries, ...incoming.publishing.entries.filter(entry => added.has(entry.documentId))] },
   };
-  return parseMigrationWorkspace(combined);
+  return parseWorkspaceImport(combined);
 }
 
 interface WorkspaceRow { revision: number; body: string; pristine: number }
@@ -103,7 +103,7 @@ export class ServerStore {
           case 'discardDraft': next = store.discardDraft(command.documentId); break;
           case 'publish': next = store.publish(command.document, command.expectedPublicationRevision, command.note); break;
           case 'rollbackPublication': next = store.rollbackPublication(command.documentId, command.publicationId, command.expectedPublicationRevision, command.note); break;
-          case 'migrateWorkspace': next = migrate(store.snapshot(), command.workspace, row.pristine === 1); break;
+          case 'importWorkspace': next = importBackup(store.snapshot(), command.workspace, row.pristine === 1); break;
           default: throw new ApiFailure(422, 'INVALID_INPUT', '不支持的工作区命令');
         }
       } catch (error) {
@@ -112,7 +112,7 @@ export class ServerStore {
         if (error instanceof WorkspaceConflict) throw new ApiFailure(409, 'WORKSPACE_CONFLICT', error.message, { currentRevision: row.revision });
         throw new ApiFailure(422, 'INVALID_INPUT', error instanceof Error ? error.message : '拓扑数据不合法');
       }
-      const body = JSON.stringify(next), unchanged = command.type === 'migrateWorkspace' && stable(next) === stable(store.snapshot());
+      const body = JSON.stringify(next), unchanged = command.type === 'importWorkspace' && stable(next) === stable(store.snapshot());
       const response = { revision: row.revision + (unchanged ? 0 : 1), workspace: next };
       this.database.query('UPDATE workspace SET revision=?,body=?,pristine=0 WHERE id=1').run(response.revision, body);
       this.database.query('INSERT INTO requests (id,fingerprint,response,created_at) VALUES (?,?,?,?)').run(request.requestId, fingerprint, JSON.stringify(response), Date.now());

@@ -62,6 +62,10 @@ describe('HTTP server and authentication', () => {
     const originResponse = await app.request('/api/logout', {}, cookie, { origin: 'https://untrusted.example' });
     expect(originResponse.status).toBe(403); expect((await originResponse.json()).error.code).toBe('ORIGIN_REJECTED');
     expect((await app.request('/api/login', { username, password, extra: true })).status).toBe(422);
+    const before = await (await app.request('/api/workspace', undefined, cookie)).json() as WorkspaceResponse;
+    const removedMigration = await app.request('/api/workspace/commands', { expectedRevision: before.revision, requestId: 'removed-browser-migration', command: { type: 'migrateWorkspace', workspace: {} } }, cookie);
+    expect(removedMigration.status).toBe(422); expect((await removedMigration.json()).error.code).toBe('INVALID_INPUT');
+    expect(await (await app.request('/api/workspace', undefined, cookie)).json()).toEqual(before);
     const malformed = await fetch(`${app.origin()}/api/workspace/commands`, { method: 'POST', headers: { cookie, origin: app.origin(), 'content-type': 'application/json' }, body: '{broken' });
     expect(malformed.status).toBe(422);
     const large = await app.request('/api/workspace/commands', { text: 'x'.repeat(5000) }, cookie);

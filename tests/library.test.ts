@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { LIBRARY_KEY, loadLibrary, saveLibrary, duplicateDocument, removeDocument, type LibraryStorage } from '../src/library';
 import { sampleDocument } from '../src/document';
-import { STORAGE_KEY, initialTopology } from '../src/topology';
 
 class MemoryStorage implements LibraryStorage {
   values = new Map<string, string>();
@@ -9,7 +8,7 @@ class MemoryStorage implements LibraryStorage {
   getItem(key: string) { return this.values.get(key) ?? null; }
   setItem(key: string, value: string) { if (this.fail) throw new Error('QuotaExceededError'); this.values.set(key, value); this.writes++; }
 }
-describe('多图存储与迁移', () => {
+describe('多图存储', () => {
   test('初始建库、切换、刷新与多图数据隔离', () => {
     const storage = new MemoryStorage(); const { library } = loadLibrary(storage);
     const second = sampleDocument('satellite');
@@ -20,14 +19,13 @@ describe('多图存储与迁移', () => {
     expect(restored.documents[1].topology.nodes[0].data.title).not.toBe('内存修改');
     expect(restored.documents[0].topology).toEqual(library.documents[0].topology);
   });
-  test('旧单图只迁移一次，并保留原始存档', () => {
-    const storage = new MemoryStorage();
-    const old = JSON.stringify({ version: 1, name: '原存档', savedAt: '', topology: initialTopology() });
-    storage.setItem(STORAGE_KEY, old);
-    const first = loadLibrary(storage); const second = loadLibrary(storage);
-    expect(first.migrated).toBe(true); expect(second.migrated).toBe(false);
+  test('不读取旧单图浏览器存档，直接创建当前拓扑库', () => {
+    const storage = new MemoryStorage(), oldKey = 'station-x6-topology-v1', raw = '{invalid old storage';
+    storage.setItem(oldKey, raw);
+    const first = loadLibrary(storage), second = loadLibrary(storage);
+    expect(first.library.documents[0].name).toBe('北京地面站');
     expect(first.library.activeId).toBe(second.library.activeId);
-    expect(storage.getItem(STORAGE_KEY)).toBe(old);
+    expect(storage.getItem(oldKey)).toBe(raw);
   });
   test('复制具有独立文档 ID，节点和模板修改不影响原图', () => {
     const original = sampleDocument('datacenter'); const copy = duplicateDocument(original);

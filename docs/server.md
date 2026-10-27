@@ -20,7 +20,7 @@ shared/api.ts            前后端请求、响应及命令类型
 src/workspace.ts          前后端复用的文档/草稿/历史/发布规则
 src/workspace-client.ts   异步写入、服务器确认快照及重试
 src/server-session.ts    登录与会话恢复
-src/server-recovery.ts   本机未同步副本及旧库读取
+src/server-recovery.ts   本机未同步副本
 tests/server/            数据库与 HTTP 验收
 tests/server-browser/    真实服务端路径的浏览器验收
 dist/                   工作台与展示页静态文件
@@ -55,13 +55,13 @@ SQLite 在事务内检查全库版本、执行命令、写入快照并记录请�
 
 页面关闭前同步写入独立本机恢复键，未确认内容触发离开提醒。浏览器禁用存储或配额不足时会提示无法保留本机副本；服务器保存仍可使用。未点击“应用修改”的表单输入不属于文档草稿。
 
-## 迁移与备份
+## 导入与备份
 
-在原来制作拓扑的浏览器、原访问地址打开新版，点击“服务器库 → 迁移本浏览器拓扑库”。先查看文档、草稿、历史和发布数量，也可先备份浏览器原存档。空服务器初始库会被迁入库替换；已有内容时合并不同 ID 的图。同 ID 的完整内容一致则跳过，不一致则整批拒绝，不自动改 ID 或覆盖。
+点击“服务器库 → 导出完整拓扑库”保存当前库；需要导入时，点击“导入完整库备份”选择 JSON 文件。备份包含文档、模板、草稿、历史和发布记录，保留节点和连线 ID、手工坐标/拐点、子图引用及发布关系。普通 `.topology.json` 只包含一张图，不包含历史。
 
-迁移保留模板、节点和连线 ID、手工坐标/拐点、子图引用、草稿基准、历史及发布关系。迁移导致原有历史容量约束裁剪时拒绝整批操作。成功后浏览器原键继续保留。
+空服务器初始库可被导入的备份替换；已有内容时合并不同 ID 的图。同 ID 的完整内容一致则跳过，不一致则整批拒绝，不自动覆盖或换 ID。导入会导致历史/发布记录超额裁剪时也整批拒绝。完整库导入是校验后的合并；数据库整体还原按下文操作。
 
-不同地址或端口的浏览器存档无法互相读取。若旧地址无法访问，可从仍可访问的原浏览器导出通用图，或迁移完整库备份。“导出完整拓扑库 / 导入完整库备份”包含多图及编辑/发布记录；普通 `.topology.json` 只包含一张图，不包含历史。完整库导入是校验后的合并，不是无条件覆盖还原。
+当前开发版本已移除浏览器旧存档检测、迁移提示、迁移/原档备份入口和旧存储键自动读取。服务器模式直接读取服务器库；本机恢复副本只用于未确认同步的当前编辑内容。
 
 ```bash
 bun run backup          # 本地 SQLite 一致性备份
@@ -85,7 +85,7 @@ SQLite 使用 WAL；不要在运行时只复制 `workspace.sqlite` 而遗漏 WAL
 | `GET /api/workspace` | `{ revision, workspace }`，不缓存 |
 | `POST /api/workspace/commands` | `{ expectedRevision, requestId, command }`；成功返回提交后的库和版本 |
 
-命令包括 `saveDraft`、`saveDocument`、`updateLibrary`、`restoreDraft`、`discardDraft`、`publish`、`rollbackPublication`、`migrateWorkspace`，精确定义见 `shared/api.ts`。发布还需传 `expectedPublicationRevision`。请求 ID 用于一次操作的重试；新操作必须使用新 ID。401 表示会话失效，409 表示版本/迁移/请求 ID 冲突，422 表示输入不合法。
+命令包括 `saveDraft`、`saveDocument`、`updateLibrary`、`restoreDraft`、`discardDraft`、`publish`、`rollbackPublication`、`importWorkspace`，精确定义见 `shared/api.ts`；完整库导入使用 `importWorkspace`，同 ID 冲突返回 `IMPORT_CONFLICT`，原迁移命令已移除。发布还需传 `expectedPublicationRevision`。请求 ID 用于一次操作的重试；新操作必须使用新 ID。401 表示会话失效，409 表示版本/导入/请求 ID 冲突，422 表示输入不合法。
 
 服务端展示页与工作台共用登录。`?document=ID&draft=1` 读取有效草稿，不带 `draft` 读取手动保存版本。`?published=ID` 每 5 秒检查当前发布，自动草稿不触发展示切换；带 `publication=发布ID` 的固定链接保持该历史快照。断网提示更新失败并保留已加载图，源图删除则当前发布展示清空。
 
@@ -102,4 +102,4 @@ bun run test:e2e:server   # 独立临时数据库，真实服务器路径，端�
 bun run test:safari:server # macOS实际Safari与Chrome双向存储验收
 ```
 
-第一版验收：Chrome 创建/保存，另一个独立浏览器读取；未登录无法读写；冲突不覆盖；断网可恢复；完整迁移不丢草稿/历史/发布/子图关系；服务关闭重开及重新部署后数据库内容保持。具体执行结果和未验收项记录在迭代工作指引，不把已编写用例等同于已通过。
+第一版验收：Chrome 创建/保存，另一个独立浏览器读取；未登录无法读写；冲突不覆盖；断网可恢复；完整库文件导入不丢草稿/历史/发布/子图关系；服务关闭重开及重新部署后数据库内容保持。具体执行结果和未验收项记录在迭代工作指引，不把已编写用例等同于已通过。

@@ -16,7 +16,6 @@ export interface LinkRecord { id: string; source: { cell: string; port: string }
 export interface Snapshot { nodes: DeviceRecord[]; edges: LinkRecord[]; elements?: DiagramElement[]; order?: string[] }
 export interface TopologyFile { version: 1; name: string; savedAt: string; topology: Snapshot }
 
-export const STORAGE_KEY = 'station-x6-topology-v1';
 export const NODE_WIDTH = 210;
 export const NODE_HEIGHT = 132;
 export const MAX_DEVICE_PORTS = 128;
